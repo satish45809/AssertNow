@@ -8,16 +8,52 @@ import { Environment, CreateEnvironmentDto, SalesforceCredentials } from '../mod
 import { NotFoundError, ValidationError } from '../models/Error.ts';
 import { Encryption } from '../utils/Encryption.ts';
 
+declare const Deno: any;
+
 export class SalesforceService {
-  // In-memory runtime store (zero hardcoded values, dynamic from frontend localStorage)
+  // Runtime store initialized and persisted to data/environments.json
   private static environments: Environment[] = [];
+
+  private static async ensureLoaded(): Promise<void> {
+    if (this.environments.length > 0) return;
+    try {
+      let data = '';
+      try {
+        data = await Deno.readTextFile('data/environments.json');
+      } catch {
+        try {
+          data = await Deno.readTextFile('../data/environments.json');
+        } catch {}
+      }
+      if (data) {
+        this.environments = JSON.parse(data);
+      }
+    } catch (e) {
+      console.warn('[SalesforceService] Error loading environments from disk:', e);
+    }
+  }
+
+  private static async persistToDisk(): Promise<void> {
+    try {
+      const payload = JSON.stringify(this.environments, null, 2);
+      try {
+        await Deno.writeTextFile('data/environments.json', payload);
+      } catch {
+        await Deno.writeTextFile('../data/environments.json', payload);
+      }
+    } catch (e) {
+      console.warn('[SalesforceService] Could not persist environments to disk:', e);
+    }
+  }
 
   public static syncEnvironments(envs: Environment[]): void {
     this.environments = envs;
     SalesforceAdapter.clearConnectionCache();
+    this.persistToDisk();
   }
 
   public static async listEnvironments(): Promise<any[]> {
+    await this.ensureLoaded();
     return this.environments.map(env => ({
       ...env,
       environmentType: env.tier,
@@ -35,6 +71,7 @@ export class SalesforceService {
   }
 
   public static async getEnvironmentById(id: string): Promise<Environment> {
+    await this.ensureLoaded();
     if ((!id || id === 'default') && this.environments.length > 0) {
       return this.environments[0];
     }
@@ -118,12 +155,14 @@ export class SalesforceService {
       this.environments.unshift(newEnv);
     }
     SalesforceAdapter.clearConnectionCache();
+    await this.persistToDisk();
     return newEnv;
   }
 
   public static async deleteEnvironment(id: string): Promise<boolean> {
     const initialCount = this.environments.length;
     this.environments = this.environments.filter(e => e.id !== id);
+    await this.persistToDisk();
     return this.environments.length < initialCount;
   }
 
@@ -138,6 +177,7 @@ export class SalesforceService {
       }
     }
     Object.assign(env, updates, { updatedAt: new Date().toISOString() });
+    await this.persistToDisk();
     return env;
   }
 
@@ -150,6 +190,11 @@ export class SalesforceService {
         env.status = 'ONLINE';
         (env as any).connectionStatus = 'HEALTHY';
         (env as any).lastVerifiedAt = new Date().toISOString();
+        if ((result as any).refreshed && creds.accessToken) {
+          env.credentials.accessToken = creds.accessToken;
+          if (creds.instanceUrl) env.credentials.instanceUrl = creds.instanceUrl;
+        }
+        await this.persistToDisk();
       }
       return result;
     } catch (err: any) {
@@ -157,6 +202,7 @@ export class SalesforceService {
       if (env) {
         env.status = 'ERROR';
         (env as any).connectionStatus = 'DEGRADED';
+        await this.persistToDisk();
       }
       throw err;
     }
@@ -223,6 +269,7 @@ export class SalesforceService {
     loginUrl?: string;
     redirectUri: string;
   }) {
+    await this.ensureLoaded();
     if (!params.clientSecret || params.clientSecret.includes('•')) {
       const match = this.environments.find(e => e.credentials.clientId === params.clientId);
       if (match && match.credentials.clientSecret) {

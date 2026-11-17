@@ -2,6 +2,8 @@
  * Application Configuration & Environment Variable Reader
  */
 
+declare const Deno: any;
+
 export class Config {
   public static readonly PORT: number = Number(Deno.env.get('PORT') || 3001);
   public static readonly HOST: string = Deno.env.get('HOST') || '0.0.0.0';

@@ -1,17 +1,17 @@
 import React, { useState } from 'react';
-import { 
-  Plus, 
-  RefreshCw, 
-  CheckCircle2, 
-  AlertTriangle, 
-  XCircle, 
-  ExternalLink, 
-  Key, 
+import {
+  Plus,
+  RefreshCw,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  ExternalLink,
+  Key,
   KeyRound,
-  Lock, 
-  Database, 
-  ShieldCheck, 
-  Check, 
+  Lock,
+  Database,
+  ShieldCheck,
+  Check,
   Activity,
   Layers,
   ChevronRight,
@@ -114,10 +114,10 @@ export const IntegrationsPage: React.FC = () => {
     } catch (err: any) {
       const isExpired = String(err.message || '').includes('expired') || String(err.message || '').includes('invalid_grant');
       showPopCard(
-        'error', 
-        isExpired ? 'Salesforce Session Expired' : 'Handshake Verification Failed', 
-        isExpired 
-          ? 'Your Salesforce OAuth session or refresh token has expired or was revoked. Please click "Reconnect" to sign in again.' 
+        'error',
+        isExpired ? 'Salesforce Session Expired' : 'Handshake Verification Failed',
+        isExpired
+          ? 'Your Salesforce OAuth session or refresh token has expired or was revoked. Please click "Reconnect" to sign in again.'
           : (err.message || 'Verification failed')
       );
       setEnvironments(prev => prev.map(e => e.id === envId ? { ...e, status: 'ERROR', connectionStatus: 'DEGRADED' } : e));
@@ -143,7 +143,7 @@ export const IntegrationsPage: React.FC = () => {
     setNewEnvName(env.name || '');
     setNewLoginUrl(env.instanceUrl || env.credentials?.loginUrl || '');
     setNewClientId(env.credentials?.clientId || '');
-    setNewClientSecret(env.credentials?.clientSecret && !env.credentials.clientSecret.includes('•') ? env.credentials.clientSecret : '');
+    setNewClientSecret(env.credentials?.clientSecret ? '••••••••' : '');
     setNewRefreshToken('');
     setOauthAuthorized(false);
     setAuthorizedUser(null);
@@ -224,7 +224,8 @@ export const IntegrationsPage: React.FC = () => {
     setIsOAuthAuthorizing(true);
     try {
       const { codeVerifier, codeChallenge } = await generatePKCE();
-      const authorizeEndpoint = `${cleanLoginUrl}/services/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(newClientId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256&prompt=consent`;
+      const scopeParam = encodeURIComponent('full refresh_token offline_access');
+      const authorizeEndpoint = `${cleanLoginUrl}/services/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(newClientId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256&scope=${scopeParam}&prompt=consent`;
 
       const width = 640;
       const height = 740;
@@ -402,12 +403,12 @@ export const IntegrationsPage: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-full">
-      <Header 
-        title="Connected Salesforce Organizations" 
+      <Header
+        title="Connected Salesforce Organizations"
         subtitle="Manage secure Salesforce CRM environments, developer orgs, and OAuth credentials"
         badge={environments.length > 0 ? `${environments.length} Active Orgs` : undefined}
         actions={
-          <button 
+          <button
             onClick={() => setIsConnectModalOpen(true)}
             className="h-8 px-3 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium flex items-center gap-1.5 transition-all shadow-sm shadow-blue-500/30"
           >
@@ -419,16 +420,16 @@ export const IntegrationsPage: React.FC = () => {
 
       <div className="p-6 space-y-6">
         {isLoading && (
-          <LoadingState 
-            message="Connecting to Salesforce and ERP Environments..." 
-            submessage="Loading registered environments and authentication credentials" 
+          <LoadingState
+            message="Connecting to Salesforce and ERP Environments..."
+            submessage="Loading registered environments and authentication credentials"
           />
         )}
 
         {error && (
-          <ErrorState 
-            error={error} 
-            onRetry={loadEnvironments} 
+          <ErrorState
+            error={error}
+            onRetry={loadEnvironments}
           />
         )}
 
@@ -458,7 +459,7 @@ export const IntegrationsPage: React.FC = () => {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {environments.map((env) => (
-                  <div 
+                  <div
                     key={env.id}
                     className="p-5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 shadow-sm transition-all space-y-4.5"
                   >
@@ -476,14 +477,12 @@ export const IntegrationsPage: React.FC = () => {
                         </div>
                       </div>
 
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border shadow-xs ${
-                        env.status === 'ERROR'
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border shadow-xs ${env.status === 'ERROR'
                           ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
                           : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                      }`}>
-                        <span className={`w-2 h-2 rounded-full ${
-                          env.status === 'ERROR' ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'
-                        }`}></span>
+                        }`}>
+                        <span className={`w-2 h-2 rounded-full ${env.status === 'ERROR' ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'
+                          }`}></span>
                         {env.status === 'ERROR' ? 'EXPIRED' : (env.status || env.connectionStatus || 'ONLINE')}
                       </span>
                     </div>
@@ -514,7 +513,7 @@ export const IntegrationsPage: React.FC = () => {
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <button 
+                        <button
                           onClick={() => handleReconnectEnvironment(env)}
                           className="h-7 px-2.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-[11px] font-medium flex items-center gap-1 transition-colors border border-blue-500/20 cursor-pointer"
                           title="Re-authorize or update OAuth credentials"
@@ -523,7 +522,7 @@ export const IntegrationsPage: React.FC = () => {
                           Reconnect
                         </button>
 
-                        <button 
+                        <button
                           disabled={testingEnvId === env.id}
                           onClick={() => handleTestConnection(env.id)}
                           className="h-7 px-2.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-medium flex items-center gap-1 transition-colors border border-slate-200 dark:border-transparent cursor-pointer"
@@ -532,14 +531,14 @@ export const IntegrationsPage: React.FC = () => {
                           {testingEnvId === env.id ? 'Verifying...' : 'Test Connection'}
                         </button>
 
-                        <button 
+                        <button
                           onClick={() => setSelectedEnv(env)}
                           className="h-7 px-2.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-medium transition-colors cursor-pointer"
                         >
                           Diagnostics
                         </button>
 
-                        <button 
+                        <button
                           onClick={() => handleDeleteEnvironment(env.id, env.name)}
                           className="h-7 w-7 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center transition-colors border border-rose-500/20 cursor-pointer"
                           title="Disconnect and remove environment"
@@ -566,7 +565,7 @@ export const IntegrationsPage: React.FC = () => {
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">Connect Salesforce Environment</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">Add Salesforce Developer, Sandbox, or Scratch Org to AssertNow</p>
               </div>
-              <button 
+              <button
                 type="button"
                 onClick={() => setIsConnectModalOpen(false)}
                 className="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
@@ -582,8 +581,8 @@ export const IntegrationsPage: React.FC = () => {
                 <div className="grid grid-cols-2 gap-3.5">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Salesforce Environment Display Name</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       required
                       placeholder="e.g. SFDC Production or Dev Org"
                       value={newEnvName}
@@ -593,7 +592,7 @@ export const IntegrationsPage: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Environment Tier</label>
-                    <select 
+                    <select
                       value={newEnvType}
                       onChange={(e) => setNewEnvType(e.target.value)}
                       className="w-full h-9 px-3 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
@@ -622,15 +621,14 @@ export const IntegrationsPage: React.FC = () => {
                             setNewAuthMethod(method);
                             setOauthAuthorized(false);
                           }}
-                          className={`h-[68px] p-3 rounded-xl border flex flex-col items-center justify-center text-center transition-all ${
-                            isSelected
+                          className={`h-[68px] p-3 rounded-xl border flex flex-col items-center justify-center text-center transition-all ${isSelected
                               ? method === 'OAuth 2.0'
                                 ? 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400 ring-2 ring-blue-500/20'
                                 : method === 'JWT'
-                                ? 'border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400 ring-2 ring-purple-500/20'
-                                : 'border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 ring-2 ring-emerald-500/20'
+                                  ? 'border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400 ring-2 ring-purple-500/20'
+                                  : 'border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 ring-2 ring-emerald-500/20'
                               : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'
-                          }`}
+                            }`}
                         >
                           <div className="flex items-center gap-1.5 font-bold text-xs leading-none">
                             {method === 'OAuth 2.0' && <KeyRound className="w-3.5 h-3.5 flex-shrink-0" />}
@@ -667,8 +665,8 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Login Domain / Instance URL
                         </label>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           value={newLoginUrl}
                           onChange={(e) => setNewLoginUrl(e.target.value)}
                           placeholder="e.g. https://yourcompany.my.salesforce.com"
@@ -680,8 +678,8 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Client ID (Consumer Key)
                         </label>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           value={newClientId}
                           onChange={(e) => setNewClientId(e.target.value)}
                           placeholder="3MVG9...sample_client_id"
@@ -695,8 +693,9 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Client Secret (Consumer Secret)
                         </label>
-                        <input 
-                          type="password" 
+                        <input
+                          type="password"
+                          autoComplete="new-password"
                           value={newClientSecret}
                           onChange={(e) => setNewClientSecret(e.target.value)}
                           placeholder="••••••••••••••••"
@@ -712,11 +711,10 @@ export const IntegrationsPage: React.FC = () => {
                           type="button"
                           disabled={isOAuthAuthorizing || oauthAuthorized}
                           onClick={handleSimulateOAuth}
-                          className={`w-full h-9 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                            oauthAuthorized
+                          className={`w-full h-9 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${oauthAuthorized
                               ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
                               : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
-                          }`}
+                            }`}
                         >
                           {isOAuthAuthorizing ? (
                             <>
@@ -787,8 +785,8 @@ export const IntegrationsPage: React.FC = () => {
                       </button>
                       {showAdvancedToken && (
                         <div className="mt-2 animate-in fade-in duration-150">
-                          <input 
-                            type="password" 
+                          <input
+                            type="password"
                             value={newRefreshToken}
                             onChange={(e) => setNewRefreshToken(e.target.value)}
                             placeholder="Paste existing refresh token here..."
@@ -818,8 +816,8 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Token Endpoint / Audience
                         </label>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           value={newLoginUrl}
                           onChange={(e) => setNewLoginUrl(e.target.value)}
                           placeholder="https://login.salesforce.com"
@@ -830,8 +828,8 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Client ID (Connected App)
                         </label>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           value={newClientId}
                           onChange={(e) => setNewClientId(e.target.value)}
                           placeholder="3MVG9...consumer_key"
@@ -845,8 +843,8 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Subject Username (Service Account)
                         </label>
-                        <input 
-                          type="email" 
+                        <input
+                          type="email"
                           value={newJwtUsername}
                           onChange={(e) => setNewJwtUsername(e.target.value)}
                           placeholder="automation-svc@enterprise.com"
@@ -867,7 +865,7 @@ export const IntegrationsPage: React.FC = () => {
                       <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                         RSA Private Key (.pem format)
                       </label>
-                      <textarea 
+                      <textarea
                         rows={2}
                         value={newJwtPrivateKey}
                         onChange={(e) => setNewJwtPrivateKey(e.target.value)}
@@ -896,8 +894,8 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Salesforce My Domain URL
                         </label>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           value={newLoginUrl}
                           onChange={(e) => setNewLoginUrl(e.target.value)}
                           placeholder="https://yourcompany.my.salesforce.com"
@@ -908,8 +906,8 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Client ID (Consumer Key)
                         </label>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           value={newClientId}
                           onChange={(e) => setNewClientId(e.target.value)}
                           placeholder="3MVG9..."
@@ -923,8 +921,9 @@ export const IntegrationsPage: React.FC = () => {
                         <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
                           Client Secret (Consumer Secret)
                         </label>
-                        <input 
-                          type="password" 
+                        <input
+                          type="password"
+                          autoComplete="new-password"
                           value={newClientSecret}
                           onChange={(e) => setNewClientSecret(e.target.value)}
                           placeholder="••••••••••••••••"
@@ -990,7 +989,7 @@ export const IntegrationsPage: React.FC = () => {
                     {selectedEnv.platform} • {selectedEnv.environmentType}
                   </div>
                 </div>
-                <button 
+                <button
                   onClick={() => setSelectedEnv(null)}
                   className="text-slate-400 hover:text-slate-700 dark:hover:text-white text-sm"
                 >
@@ -1067,13 +1066,12 @@ export const IntegrationsPage: React.FC = () => {
           <div className="w-full max-w-md p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                  toastCard.type === 'success' 
-                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' 
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${toastCard.type === 'success'
+                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
                     : toastCard.type === 'error'
-                    ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
-                    : 'bg-blue-500/10 text-blue-500 border border-blue-500/20'
-                }`}>
+                      ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                      : 'bg-blue-500/10 text-blue-500 border border-blue-500/20'
+                  }`}>
                   {toastCard.type === 'success' && <CheckCircle2 className="w-5 h-5" />}
                   {toastCard.type === 'error' && <AlertTriangle className="w-5 h-5" />}
                   {toastCard.type === 'info' && <ExternalLink className="w-5 h-5" />}
@@ -1083,7 +1081,7 @@ export const IntegrationsPage: React.FC = () => {
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{toastCard.description}</p>
                 </div>
               </div>
-              <button 
+              <button
                 type="button"
                 onClick={() => setToastCard(null)}
                 className="w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"

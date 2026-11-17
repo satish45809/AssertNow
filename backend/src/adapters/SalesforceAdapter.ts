@@ -24,6 +24,56 @@ export class SalesforceAdapter {
   }
 
   /**
+   * Refreshes an expired access token using the stored OAuth 2.0 refresh token.
+   */
+  public static async refreshAccessToken(credentials: SalesforceCredentials): Promise<{ accessToken: string; instanceUrl?: string }> {
+    if (!credentials.refreshToken || !credentials.clientId) {
+      throw new SalesforceError('Cannot refresh token: Missing refresh token or client ID.');
+    }
+
+    const host = credentials.instanceUrl || credentials.loginUrl || 'https://login.salesforce.com';
+    const tokenEndpoint = `${host.replace(/\/+$/, '')}/services/oauth2/token`;
+
+    const bodyParams = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: credentials.clientId,
+      refresh_token: credentials.refreshToken,
+    });
+
+    if (credentials.clientSecret && !credentials.clientSecret.includes('•')) {
+      bodyParams.set('client_secret', credentials.clientSecret);
+    }
+
+    const res = await fetch(tokenEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: bodyParams.toString(),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new SalesforceError(
+        `Salesforce Token Refresh Failed (${res.status}): ${errBody.error_description || errBody.error || res.statusText}`,
+        errBody.error || 'REFRESH_TOKEN_EXPIRED'
+      );
+    }
+
+    const tokenData = await res.json();
+    credentials.accessToken = tokenData.access_token;
+    if (tokenData.instance_url) {
+      credentials.instanceUrl = tokenData.instance_url;
+    }
+
+    // Invalidate stale connection cache
+    this.clearConnectionCache();
+
+    return {
+      accessToken: tokenData.access_token,
+      instanceUrl: tokenData.instance_url || credentials.instanceUrl,
+    };
+  }
+
+  /**
    * Initializes and validates a JSforce connection based on the credentials provided.
    * Supports:
    * 1. OAuth 2.0 Web Server Refresh Token (External Client App)
@@ -136,6 +186,36 @@ export class SalesforceAdapter {
         instanceUrl: conn.instanceUrl,
       };
     } catch (err: any) {
+      const isExpired = String(err.message || '').includes('expired') || 
+                        String(err.message || '').includes('INVALID_SESSION_ID') || 
+                        String(err.message || '').includes('invalid_grant') ||
+                        String(err.message || '').includes('401');
+
+      if (isExpired && credentials.refreshToken && credentials.clientId) {
+        try {
+          console.log('[SalesforceAdapter] Session expired during testConnection. Attempting automatic refresh...');
+          await this.refreshAccessToken(credentials);
+          const freshConn = await this.getConnection(credentials);
+          const identity = await freshConn.identity();
+          const orgQueryResult = await freshConn.query('SELECT Id, Name, OrganizationType, IsSandbox FROM Organization LIMIT 1');
+          const orgInfo = orgQueryResult.records?.[0] || {};
+
+          return {
+            online: true,
+            userId: identity.user_id,
+            username: identity.username,
+            organizationId: identity.organization_id,
+            organizationName: orgInfo.Name || 'Salesforce Org',
+            isSandbox: orgInfo.IsSandbox || false,
+            apiVersion: freshConn.version,
+            instanceUrl: freshConn.instanceUrl,
+            refreshed: true,
+          };
+        } catch (refreshErr: any) {
+          console.warn('[SalesforceAdapter] Auto-refresh retry during testConnection failed:', refreshErr.message);
+        }
+      }
+
       throw new SalesforceError(
         `Salesforce verification failed: ${err.message}`,
         err.errorCode || 'HANDSHAKE_ERROR',
