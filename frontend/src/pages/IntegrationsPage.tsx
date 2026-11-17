@@ -224,8 +224,7 @@ export const IntegrationsPage: React.FC = () => {
     setIsOAuthAuthorizing(true);
     try {
       const { codeVerifier, codeChallenge } = await generatePKCE();
-      const scopeParam = encodeURIComponent('full refresh_token offline_access');
-      const authorizeEndpoint = `${cleanLoginUrl}/services/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(newClientId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256&scope=${scopeParam}&prompt=consent`;
+      const authorizeEndpoint = `${cleanLoginUrl}/services/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(newClientId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256&prompt=consent`;
 
       const width = 640;
       const height = 740;
