@@ -1,0 +1,83 @@
+[
+  {
+    "id": "wf-1794824951128",
+    "organizationId": "org-enterprise-1",
+    "name": "NEW",
+    "description": "Custom regression suite created in AssertNow Studio",
+    "platform": "salesforce",
+    "status": "DRAFT",
+    "version": 1,
+    "tags": [
+      "Regression",
+      "Draft"
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "start-1",
+          "type": "startNode",
+          "position": {
+            "x": 420,
+            "y": 60
+          },
+          "data": {
+            "label": "Start",
+            "nodeType": "START",
+            "config": {
+              "triggerType": "MANUAL"
+            }
+          }
+        },
+        {
+          "id": "end-1",
+          "type": "endNode",
+          "position": {
+            "x": 420,
+            "y": 280
+          },
+          "data": {
+            "label": "End",
+            "nodeType": "END",
+            "config": {
+              "isFault": false
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "e-start-end",
+          "source": "start-1",
+          "target": "end-1",
+          "sourceHandle": "bottom",
+          "targetHandle": "top",
+          "type": "flowConnector",
+          "style": {
+            "stroke": "#94a3b8",
+            "strokeWidth": 2
+          }
+        }
+      ]
+    },
+    "resources": [
+      {
+        "id": "res-quote",
+        "name": "Quote",
+        "type": "VARIABLE",
+        "dataType": "Text",
+        "description": "Quote reference variable",
+        "defaultValue": "Q-2026-001"
+      },
+      {
+        "id": "res-add",
+        "name": "add",
+        "type": "FORMULA",
+        "dataType": "Text",
+        "description": "Calculates concatenated line-item summary",
+        "formulaExpression": "{!$Record.Name} & \" - \" & {!Quote}"
+      }
+    ],
+    "createdAt": "2026-11-16T10:29:11.128Z",
+    "updatedAt": "2026-11-16T10:29:11.128Z"
+  }
+]

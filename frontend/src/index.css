@@ -1,0 +1,242 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222 47% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222 47% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 221.2 83.2% 53.3%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 13%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 12%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 20%;
+    --input: 217 33% 18%;
+    --ring: 224 76% 48%;
+  }
+}
+
+/* Light / Dark grid backgrounds */
+.dark .bg-tech-grid {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
+
+.light .bg-tech-grid {
+  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(to right, rgba(15, 23, 42, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
+}
+
+/* Light / Dark scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.8);
+  border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(71, 85, 105, 1);
+}
+
+.light ::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.8);
+}
+.light ::-webkit-scrollbar-thumb {
+  background: rgba(203, 213, 225, 0.9);
+  border-radius: 3px;
+}
+.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 1);
+}
+
+/* React Flow custom styling */
+.dark .react-flow__background {
+  background-color: #0b1120 !important;
+}
+
+.light .react-flow__background {
+  background-color: #f8fafc !important;
+}
+
+/* Base Edge stroke (custom edges can override with style / classes) */
+.react-flow__edge-path {
+  stroke: #64748b;
+  stroke-width: 2;
+}
+
+/* Animated Flow Motion Keyframe for Running Simulation */
+@keyframes dashdraw {
+  from {
+    stroke-dashoffset: 28;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.flow-edge-running .react-flow__edge-path,
+.flow-edge-running path {
+  stroke-width: 2.8px !important;
+  stroke-dasharray: 8 6 !important;
+  animation: dashdraw 0.5s linear infinite !important;
+  filter: drop-shadow(0 0 6px currentColor) !important;
+}
+
+.flow-edge-passed .react-flow__edge-path,
+.flow-edge-passed path {
+  stroke-width: 2.2px !important;
+  transition: stroke 0.3s ease;
+}
+
+/* React Flow sleek handles for Salesforce Flow Builder */
+.react-flow__handle {
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 50% !important;
+  border: 1.5px solid transparent !important;
+  transition: all 0.15s ease-in-out !important;
+  opacity: 0.5;
+}
+
+.react-flow__handle:hover {
+  transform: scale(1.4);
+  opacity: 1 !important;
+}
+
+.dark .react-flow__handle {
+  background-color: #64748b !important;
+  border-color: #0f172a !important;
+}
+
+.dark .react-flow__handle:hover {
+  background-color: #38bdf8 !important;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.6) !important;
+}
+
+.light .react-flow__handle {
+  background-color: #94a3b8 !important;
+  border-color: #ffffff !important;
+}
+
+.light .react-flow__handle:hover {
+  background-color: #0284c7 !important;
+  box-shadow: 0 1px 4px rgba(2, 132, 199, 0.4) !important;
+}
+
+/* Completely remove React Flow watermark / attribution */
+.react-flow__attribution {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* React Flow Controls (+ / - / fitview / lock) high contrast buttons */
+.react-flow__controls {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12) !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  border: 1px solid #cbd5e1 !important;
+  background-color: #ffffff !important;
+}
+
+.dark .react-flow__controls {
+  border-color: #334155 !important;
+  background-color: #1e293b !important;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45) !important;
+}
+
+.react-flow__controls-button {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  color: #1e293b !important;
+  fill: #1e293b !important;
+  width: 30px !important;
+  height: 30px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 6px !important;
+  transition: all 0.15s ease !important;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: #f1f5f9 !important;
+  color: #0284c7 !important;
+  fill: #0284c7 !important;
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor !important;
+  stroke: currentColor !important;
+  width: 14px !important;
+  height: 14px !important;
+  max-width: 14px !important;
+  max-height: 14px !important;
+  display: block !important;
+}
+
+.dark .react-flow__controls-button {
+  background-color: #1e293b !important;
+  border-bottom: 1px solid #334155 !important;
+  color: #f8fafc !important;
+  fill: #f8fafc !important;
+}
+
+.dark .react-flow__controls-button:hover {
+  background-color: #334155 !important;
+  color: #38bdf8 !important;
+  fill: #38bdf8 !important;
+}
+
+.dark .react-flow__controls-button svg {
+  fill: currentColor !important;
+  stroke: currentColor !important;
+}
