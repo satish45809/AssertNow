@@ -2,7 +2,7 @@
   {
     "id": "env-sf-1794773232566",
     "organizationId": "org-enterprise-1",
-    "name": "TMNow",
+    "name": "AssertNow-SFDC",
     "platform": "salesforce",
     "authMethod": "OAuth 2.0",
     "status": "ONLINE",
@@ -14,13 +14,13 @@
       "loginUrl": "https://techmantranow29-dev-ed.develop.my.salesforce.com",
       "instanceUrl": "https://techmantranow29-dev-ed.develop.my.salesforce.com",
       "clientId": "3MVG9FofAY6PhRtEtGhs1F5483_urRJ2AZzMjW.L_SbGEHWgHNZyqErzRigTwkRLezPzn8uEAIJb18v5eTps4",
-      "clientSecret": "",
-      "refreshToken": "",
-      "accessToken": "",
+      "clientSecret": "XMQ80FkNbCPKND2YrDinj0a6MUiHI/B62mP12voZWxNmIIJaleVOMaZdTuirBeEjxCIqaz1hQ3fOINS/eRkic+laMW0bNTyerVz/nh4k+J7PJgEcW5KlG8YT8S8=",
+      "refreshToken": "Nu+FxyhbGKQtxOBwctfTYMyCv3Glj3Dpln8q1n6rpNF5+26PLHId39zY9ldZ9yZqv3SLEPO+ViX0CO8LP5iOSyrr69gP7MJBtC60qAocPRIfw7ExL/qQ/PYGYYN6LJeUCQNuyA9y/J4GYB0KbXCrNImgXw==",
+      "accessToken": "00Dg700000Pvu5V!AQEAQNL8MSu3LrTI6Yw2zUxSeOVG2w5pXU_qLZa9M4_0VeZy_L6H0p6cc5EOzXnueWSh_.klDUUo8c2VSoiru6jfPOfhfimf",
       "username": "assestnow@techmantra.com"
     },
-    "lastVerifiedAt": "2026-11-17T17:54:51.273Z",
-    "createdAt": "2026-11-17T17:52:20.420Z",
-    "updatedAt": "2026-11-17T17:52:20.420Z"
+    "lastVerifiedAt": "2026-11-18T05:03:34.432Z",
+    "createdAt": "2026-11-18T05:03:34.432Z",
+    "updatedAt": "2026-11-18T05:03:34.432Z"
   }
 ]
