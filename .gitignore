@@ -24,6 +24,8 @@ vite.config.ts.timestamp-*
 !.env.example
 *.pem
 *.key
+*.bak.json
+
 
 # Editor & OS files
 .DS_Store
