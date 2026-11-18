@@ -14,9 +14,9 @@
       "loginUrl": "https://techmantranow29-dev-ed.develop.my.salesforce.com",
       "instanceUrl": "https://techmantranow29-dev-ed.develop.my.salesforce.com",
       "clientId": "3MVG9FofAY6PhRtEtGhs1F5483_urRJ2AZzMjW.L_SbGEHWgHNZyqErzRigTwkRLezPzn8uEAIJb18v5eTps4",
-      "clientSecret": "Gb0QyDSFYRay0UHJgA+GdCUL0JGA/BRjN55VLX5R0RXUr2ApK4H4nvs4nFSeuKVHoK36pWK5FeV/kW4kJ8HLcpJWWKlKjqVdLx6mpL1jmbOvlBuFzKY+E7ixbNI=",
-      "refreshToken": "dAO4RuLXr/Rn3Dq43xODsvKr2ED5PFDQsTb1+MKDsdAHDFT7brrexqqoWXHZmaolbaN6XSb0SRv7WqbWKgRAxpKXBnHkKmcBQvtcfqfrfA/rA7i73J/0otGX5U8BslTX/nmnpjUuJlScbarT3xQER15CEg==",
-      "accessToken": "00Dg700000Pvu5V!AQEAQNjUgrScnrNONjfwSbiPz6VHH1ncjOIHt6RJnGEJRWErAc.Hutemtx4HJGETGX9kNhaxuiuoZBfTttnPssPvyo8P4zX3",
+      "clientSecret": "",
+      "refreshToken": "",
+      "accessToken": "",
       "username": "assestnow@techmantra.com"
     },
     "lastVerifiedAt": "2026-11-17T17:54:51.273Z",
