@@ -19,7 +19,7 @@ export class ApiError extends Error {
 }
 
 export class ApiClient {
-  public static readonly BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://127.0.0.1:3001/api/v1';
+  public static readonly BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000/api/salesforce';
 
   public static async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;

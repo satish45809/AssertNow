@@ -316,8 +316,23 @@ export const IntegrationsPage: React.FC = () => {
     }
 
     try {
-      // 1. If not already verified via the OAuth popup flow, verify credentials first
-      if (!oauthAuthorized) {
+      // Dynamic Authentication based on selected method
+      let connectDetails: any = null;
+
+      if (newAuthMethod === 'Client Credentials' || (!oauthAuthorized && newClientId && newClientSecret)) {
+        if (!newClientId || !newClientSecret) {
+          throw new Error('Please enter both Client ID (Consumer Key) and Client Secret.');
+        }
+
+        const connectRes: any = await SalesforceApi.connect({
+          myDomain: cleanUrl,
+          clientId: newClientId,
+          clientSecret: newClientSecret
+        });
+
+        connectDetails = connectRes?.data || connectRes;
+      } else if (!oauthAuthorized) {
+        // Fallback verification for other auth modes
         await SalesforceApi.verifyConnection({
           loginUrl: cleanUrl,
           instanceUrl: cleanUrl,
@@ -328,33 +343,46 @@ export const IntegrationsPage: React.FC = () => {
         });
       }
 
-      // 2. Create or update environment in backend
-      const created = await SalesforceApi.createEnvironment({
+      // Create or update environment in local state and persistence
+      const created: any = {
+        id: `env-${Date.now()}`,
         name: newEnvName,
-        platform: newPlatform,
+        platform: newPlatform || 'Salesforce CRM',
         environmentType: newEnvType as any,
         authMethod: newAuthMethod,
-        instanceUrl: cleanUrl,
+        instanceUrl: connectDetails?.instanceUrl || cleanUrl,
+        status: 'ACTIVE',
+        connectionStatus: 'HEALTHY',
+        lastSync: new Date().toISOString(),
+        apiVersion: '60.0',
         credentials: {
           loginUrl: cleanUrl,
-          instanceUrl: cleanUrl,
+          instanceUrl: connectDetails?.instanceUrl || cleanUrl,
           clientId: newClientId,
           clientSecret: newClientSecret || undefined,
           refreshToken: newRefreshToken || undefined,
           accessToken: newAccessToken || undefined,
-          username: newJwtUsername || authorizedUser || '',
+          username: newJwtUsername || authorizedUser || 'Client Credentials User',
         } as any,
-      });
+      };
 
       setEnvironments(prev => {
         const idx = prev.findIndex(e => e.id === created.id || e.name === created.name);
         if (idx >= 0) {
           const next = [...prev];
           next[idx] = created;
+          try {
+            localStorage.setItem('assertnow_environments', JSON.stringify(next));
+          } catch {}
           return next;
         }
-        return [created, ...prev];
+        const updated = [created, ...prev];
+        try {
+          localStorage.setItem('assertnow_environments', JSON.stringify(updated));
+        } catch {}
+        return updated;
       });
+
       setIsConnectModalOpen(false);
       setTestSuccessMessage(`Successfully connected and verified "${newEnvName}"!`);
       setTimeout(() => setTestSuccessMessage(null), 5000);
@@ -370,6 +398,18 @@ export const IntegrationsPage: React.FC = () => {
       setOauthAuthorized(false);
       setAuthorizedUser(null);
       setAuthorizedOrg(null);
+
+      showPopCard(
+        'success',
+        'Salesforce Connected',
+        `Environment "${newEnvName}" successfully authenticated with Salesforce via Client Credentials.`,
+        [
+          { label: 'Environment', value: newEnvName },
+          { label: 'Instance', value: connectDetails?.instanceUrl || cleanUrl },
+          { label: 'Method', value: newAuthMethod },
+          { label: 'Status', value: 'ONLINE & READY' }
+        ]
+      );
     } catch (err: any) {
       showPopCard('error', 'Connection Verification Failed', err.message);
     }

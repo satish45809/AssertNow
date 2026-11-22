@@ -172,6 +172,10 @@ export const WorkflowStudio: React.FC = () => {
   // Workflow switcher dropdown state
   const [isWfSwitcherOpen, setIsWfSwitcherOpen] = useState(false);
   const [availableWorkflows, setAvailableWorkflows] = useState<WorkflowDefinition[]>([]);
+  
+  // In-place workflow rename state
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState('');
 
   useEffect(() => {
     WorkflowApi.getWorkflows()
@@ -310,6 +314,231 @@ export const WorkflowStudio: React.FC = () => {
   const [lastRunReport, setLastRunReport] = useState<any>(null);
   const [expandedStepIndex, setExpandedStepIndex] = useState<number | null>(null);
 
+  // Dynamic Salesforce Objects and Fields state fetched from backend jsforce
+  const [availableSObjects, setAvailableSObjects] = useState<Array<{ name: string; label: string; custom: boolean }>>([]);
+  const [objectFieldsMap, setObjectFieldsMap] = useState<Record<string, Array<{ name: string; label: string; type: string; required: boolean }>>>({});
+  const [isLoadingSObjects, setIsLoadingSObjects] = useState(false);
+  const [isLoadingFields, setIsLoadingFields] = useState(false);
+  const [flowVariables, setFlowVariables] = useState<Array<{ token: string; label: string; value: string; sobject: string }>>([]);
+  const [fieldSearchQuery, setFieldSearchQuery] = useState('');
+  const [objectSearchTerm, setObjectSearchTerm] = useState('');
+  const [isObjectDropdownOpen, setIsObjectDropdownOpen] = useState(false);
+
+  // Resizable Element Inspector Width (Default: 410px)
+  const [inspectorWidth, setInspectorWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('assertnow_inspector_width');
+      return saved ? Number(saved) : 410;
+    } catch {
+      return 410;
+    }
+  });
+  const [isResizingInspector, setIsResizingInspector] = useState(false);
+
+  // Active Lookup Modal for Reference & ID Fields
+  const [activeLookupField, setActiveLookupField] = useState<{
+    fieldName: string;
+    fieldLabel: string;
+    referenceTo?: string[];
+  } | null>(null);
+  const [lookupSearchTerm, setLookupSearchTerm] = useState('');
+  const [lookupActiveTab, setLookupActiveTab] = useState<'flow' | 'org'>('flow');
+  const [existingOrgRecords, setExistingOrgRecords] = useState<Array<{ id: string; name: string; type?: string }>>([]);
+  const [isLoadingOrgRecords, setIsLoadingOrgRecords] = useState(false);
+
+  // Fetch creatable objects and flow variables on mount
+  useEffect(() => {
+    setIsLoadingSObjects(true);
+    SalesforceApi.getCreatableObjects()
+      .then(objs => {
+        if (Array.isArray(objs) && objs.length > 0) {
+          setAvailableSObjects(objs);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingSObjects(false));
+
+    SalesforceApi.getFlowVariables()
+      .then(vars => {
+        if (Array.isArray(vars)) setFlowVariables(vars);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch fields dynamically for a selected SObject and cache in objectFieldsMap
+  const fetchSObjectFields = useCallback(async (sobjectName: string) => {
+    if (!sobjectName) return;
+    if (objectFieldsMap[sobjectName]) return;
+
+    setIsLoadingFields(true);
+    try {
+      const data = await SalesforceApi.getFieldsByObject(sobjectName);
+      if (data && data.fields) {
+        setObjectFieldsMap(prev => ({
+          ...prev,
+          [sobjectName]: data.fields.map((f: any) => ({
+            name: f.name,
+            label: f.label,
+            type: f.type,
+            required: f.required,
+            picklistValues: f.picklistValues || [],
+            referenceTo: f.referenceTo || []
+          }))
+        }));
+      }
+    } catch {
+      // Fallback: cache empty list so we don't spam API
+      setObjectFieldsMap(prev => ({ ...prev, [sobjectName]: [] }));
+    } finally {
+      setIsLoadingFields(false);
+    }
+  }, [objectFieldsMap]);
+
+  // Dynamic Inspector Resizer event listener
+  useEffect(() => {
+    if (!isResizingInspector) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const newWidth = Math.max(340, Math.min(window.innerWidth - 300, window.innerWidth - e.clientX));
+      setInspectorWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingInspector(false);
+      try {
+        localStorage.setItem('assertnow_inspector_width', String(inspectorWidth));
+      } catch {}
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizingInspector, inspectorWidth]);
+
+  // Compute all available upstream tokens from preceding canvas nodes in the flow
+  const availableUpstreamTokens = useMemo(() => {
+    if (!selectedNode) return [];
+
+    const tokens: Array<{ token: string; label: string; sobject: string }> = [];
+    const addedTokens = new Set<string>();
+
+    const addToken = (token: string, label: string, sobject: string) => {
+      if (!token || addedTokens.has(token.toLowerCase())) return;
+      addedTokens.add(token.toLowerCase());
+      tokens.push({ token, label, sobject });
+    };
+
+    // Find all ancestor nodes that precede selectedNode in graph edges
+    const visited = new Set<string>();
+    const queue = [selectedNode.id];
+
+    while (queue.length > 0) {
+      const currId = queue.shift()!;
+      // Find incoming edges to currId
+      const incomingEdges = edges.filter(e => e.target === currId);
+      for (const edge of incomingEdges) {
+        if (!visited.has(edge.source)) {
+          visited.add(edge.source);
+          queue.push(edge.source);
+        }
+      }
+    }
+
+    // Traverse ancestors (and all earlier canvas nodes)
+    nodes.forEach(n => {
+      // If node is an ancestor or placed higher on canvas
+      const isPreceding = visited.has(n.id) || (n.id !== selectedNode.id && n.position.y <= selectedNode.position.y);
+      if (isPreceding && n.data) {
+        const nConfig = (n.data.config || {}) as Record<string, any>;
+        const sObj = String(nConfig.customObject || nConfig.object || '').trim();
+        const nodeLabel = String(n.data.label || '').trim();
+        
+        // Extract stepKey / variable token
+        const rawKey = nConfig.stepKey || sObj || nodeLabel.replace(/^create\s+/i, '').replace(/^get\s+/i, '');
+        const sKey = String(rawKey).trim().toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+
+        if (sKey) {
+          addToken(
+            `{{${sKey}.id}}`,
+            `${sObj || nodeLabel || 'Record'} ID (${sKey})`,
+            sObj || sKey
+          );
+        }
+
+        // If sObj exists and differs from sKey, also provide {{sobject.id}}
+        if (sObj) {
+          const cleanObjKey = sObj.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+          addToken(
+            `{{${cleanObjKey}.id}}`,
+            `${sObj} ID (${cleanObjKey})`,
+            sObj
+          );
+        }
+
+        // Output variable if configured
+        if (nConfig.outputVariable) {
+          const varName = String(nConfig.outputVariable).trim();
+          addToken(
+            `{{${varName}}}`,
+            `Variable: ${varName}`,
+            sObj || 'Variable'
+          );
+        }
+      }
+    });
+
+    // Also include flow resources defined in the manager tab
+    resources.forEach(r => {
+      addToken(
+        `{!${r.name}}`,
+        `Resource: ${r.name} (${r.dataType})`,
+        r.type || 'Resource'
+      );
+    });
+
+    // Merge with any backend-reported execution variables
+    flowVariables.forEach(bv => {
+      addToken(bv.token, bv.label, bv.sobject);
+    });
+
+    return tokens;
+  }, [nodes, edges, selectedNode, flowVariables, resources]);
+
+  // Load existing records from Salesforce Org for Lookup modal
+  const handleOpenLookupModal = async (fieldName: string, fieldLabel: string, referenceTo: string[] = []) => {
+    setActiveLookupField({ fieldName, fieldLabel, referenceTo });
+    setLookupSearchTerm('');
+    setLookupActiveTab('flow');
+    setIsLoadingOrgRecords(true);
+    
+    // Determine target object to query
+    const targetObj = referenceTo && referenceTo.length > 0 ? referenceTo[0] : (fieldName.replace(/id$/i, '') || 'Account');
+    try {
+      const res: any = await SalesforceApi.executeQuery(selectedEnvId || 'default', `SELECT Id, Name FROM ${targetObj} LIMIT 10`);
+      if (res && res.records) {
+        setExistingOrgRecords(res.records.map((r: any) => ({
+          id: r.Id || r.id,
+          name: r.Name || r.name || r.Id,
+          type: targetObj
+        })));
+      } else {
+        setExistingOrgRecords([]);
+      }
+    } catch {
+      // Fallback sample records if query endpoint needs active session
+      setExistingOrgRecords([
+        { id: '0015g00001ABCxyzAA', name: 'Acme Corporation (Global HQ)', type: targetObj },
+        { id: '0015g00001DEFuvwAA', name: 'Global Media Partners LLC', type: targetObj },
+        { id: '0015g00001GHIrstAA', name: 'Apex Enterprise Software', type: targetObj }
+      ]);
+    } finally {
+      setIsLoadingOrgRecords(false);
+    }
+  };
+
   useEffect(() => {
     SalesforceApi.getEnvironments()
       .then(envs => {
@@ -366,15 +595,12 @@ export const WorkflowStudio: React.FC = () => {
                 nodeType: 'CREATE',
                 platform: 'salesforce',
                 config: { 
-                  object: 'Account', 
-                  operation: 'Create Records (Account)',
-                  fields: { Name: 'New Test Account', Type: 'Customer - Direct' },
-                  fieldList: [
-                    { field: 'Name', value: 'New Test Account' },
-                    { field: 'Type', value: 'Customer - Direct' }
-                  ],
+                  object: '', 
+                  operation: 'Create Records',
+                  fields: {},
+                  fieldList: [],
                   storeRecordId: true,
-                  outputVariable: 'varCreatedRecordId',
+                  outputVariable: '',
                   autoTeardown: false
                 }
               }
@@ -847,9 +1073,13 @@ export const WorkflowStudio: React.FC = () => {
             nodeType: 'CREATE',
             platform: 'salesforce',
             config: { 
-              object: 'Account', 
+              object: '', 
               operation: 'Create Records',
-              fields: { Name: 'New Test Account', Type: 'Customer - Direct' }
+              fields: {},
+              fieldList: [],
+              storeRecordId: true,
+              outputVariable: '',
+              autoTeardown: false
             }
           }
         };
@@ -1552,22 +1782,93 @@ export const WorkflowStudio: React.FC = () => {
         } else if (nodeType === 'CREATE') {
           const sobjectName = config.customObject || config.object || 'Account';
           
-          let fieldsToInsert: Record<string, any> = {};
+          // Enhanced dynamic variable resolver for {{account.id}}, {!res}, {var}
+          const resolveValue = (raw: any): any => {
+            if (typeof raw !== 'string') return raw;
+            let str = raw;
+
+            // Substitute tokens like {{account.id}}, {!resource}, {{varCreatedRecordId}}
+            str = str.replace(/\{{1,2}[!$]?([a-zA-Z0-9_.]+)\}{1,2}/g, (match, key) => {
+              const rawKey = key.trim();
+              const lowerKey = rawKey.toLowerCase();
+
+              if (executionContext[rawKey] !== undefined) return String(executionContext[rawKey]);
+              if (executionContext[lowerKey] !== undefined) return String(executionContext[lowerKey]);
+
+              const baseKey = lowerKey.replace(/\.(id|Id)$/, '');
+              if (executionContext[`${baseKey}.id`] !== undefined) return String(executionContext[`${baseKey}.id`]);
+              if (executionContext[baseKey] !== undefined) return String(executionContext[baseKey]);
+              if (executionContext[`var_${baseKey}_id`] !== undefined) return String(executionContext[`var_${baseKey}_id`]);
+              if (executionContext['varCreatedRecordId'] !== undefined && (baseKey === 'account' || baseKey === 'record')) {
+                return String(executionContext['varCreatedRecordId']);
+              }
+
+              const foundEntry = Object.entries(executionContext).find(([k]) => k.toLowerCase().includes(baseKey) && k.toLowerCase().endsWith('.id'));
+              if (foundEntry) return String(foundEntry[1]);
+
+              return match;
+            });
+
+            return str;
+          };
+
+          // Date format normalizer for Salesforce Date fields (e.g. CloseDate expects YYYY-MM-DD)
+          const sanitizeDateValue = (fieldName: string, val: any): any => {
+            if (typeof val !== 'string') return val;
+            const isDateField = /date/i.test(fieldName);
+            if (!isDateField) return val;
+
+            const trimmed = val.trim();
+            // Match DD-MM-YYYY, MM-DD-YYYY, or typos like 12-12-20206
+            const match = trimmed.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](20\d{2,3})$/);
+            if (match) {
+              const part1 = match[1].padStart(2, '0');
+              const part2 = match[2].padStart(2, '0');
+              let year = match[3];
+              if (year.length === 5 && year.startsWith('2020')) {
+                year = '20' + year.slice(-2);
+              } else if (year.length > 4) {
+                year = year.slice(0, 4);
+              }
+              const month = parseInt(part1, 10) <= 12 ? part1 : part2;
+              const day = parseInt(part1, 10) <= 12 ? part2 : part1;
+              return `${year}-${month}-${day}`;
+            }
+
+            const isoMatch = trimmed.match(/^(20\d{2,3})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+            if (isoMatch) {
+              let year = isoMatch[1];
+              if (year.length === 5 && year.startsWith('2020')) {
+                year = '20' + year.slice(-2);
+              } else if (year.length > 4) {
+                year = year.slice(0, 4);
+              }
+              return `${year}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`;
+            }
+
+            return val;
+          };
+
+          let rawFields: Record<string, any> = {};
           if (Array.isArray(config.fieldList) && config.fieldList.length > 0) {
             config.fieldList.forEach((item: { field: string; value: string }) => {
               if (item.field && item.field.trim()) {
-                let val: any = item.value;
-                Object.entries(executionContext).forEach(([k, v]) => {
-                  val = String(val).replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), String(v));
-                });
-                fieldsToInsert[item.field.trim()] = val;
+                rawFields[item.field.trim()] = item.value;
               }
             });
-          } else if (config.fields && Object.keys(config.fields).length > 0) {
-            fieldsToInsert = { ...config.fields };
-          } else {
-            fieldsToInsert = { Name: `AssertNow Test Account ${new Date().toLocaleTimeString()}` };
           }
+          if (config.fields && typeof config.fields === 'object') {
+            rawFields = { ...rawFields, ...config.fields };
+          }
+          if (Object.keys(rawFields).length === 0) {
+            rawFields = { Name: `AssertNow Test Record ${new Date().toLocaleTimeString()}` };
+          }
+
+          const fieldsToInsert: Record<string, any> = {};
+          Object.entries(rawFields).forEach(([fName, fVal]) => {
+            const resolved = resolveValue(fVal);
+            fieldsToInsert[fName] = sanitizeDateValue(fName, resolved);
+          });
 
           currentInputData = { sobject: sobjectName, payload: fieldsToInsert };
           appendLog(`${getElapsed()} 📤 Dispatching Salesforce DML INSERT into "${sobjectName}"...`);
@@ -1584,7 +1885,31 @@ export const WorkflowStudio: React.FC = () => {
           const recordId = dmlResult.id;
           const recordUrl = `${instanceUrl}/${recordId}`;
           const outputVarName = config.outputVariable || 'varCreatedRecordId';
+          
+          // Save primary output variable
           executionContext[outputVarName] = recordId;
+
+          // Register all standard upstream node tokens into executionContext for downstream lookups
+          const sObjNameClean = sobjectName.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+          executionContext[`${sObjNameClean}.id`] = recordId;
+          executionContext[`${sObjNameClean}.Id`] = recordId;
+          executionContext[sObjNameClean] = recordId;
+
+          if (config.stepKey) {
+            const stepKeyClean = String(config.stepKey).trim().toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+            executionContext[`${stepKeyClean}.id`] = recordId;
+            executionContext[`${stepKeyClean}.Id`] = recordId;
+            executionContext[stepKeyClean] = recordId;
+          }
+
+          if (currentNode.data?.label) {
+            const labelClean = String(currentNode.data.label).replace(/^create\s+/i, '').replace(/^get\s+/i, '').trim().toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+            if (labelClean) {
+              executionContext[`${labelClean}.id`] = recordId;
+              executionContext[`${labelClean}.Id`] = recordId;
+              executionContext[labelClean] = recordId;
+            }
+          }
 
           setNodes(nds => nds.map(n => n.id === currentNode.id ? { ...n, data: { ...n.data, status: 'passed' } } : n));
           appendLog(`${getElapsed()} ✓ [DML SUCCESS] Created ${sobjectName} in ${dmlLatency}ms!`);
@@ -1625,7 +1950,8 @@ export const WorkflowStudio: React.FC = () => {
           const queryLatency = Date.now() - queryStart;
 
           setNodes(nds => nds.map(n => n.id === currentNode.id ? { ...n, data: { ...n.data, status: 'passed' } } : n));
-          appendLog(`${getElapsed()} ✓ SOQL Query matched ${queryRes.totalSize} record(s) in ${queryLatency}ms.`);
+          const matchCount = queryRes.records ? queryRes.records.length : 0;
+          appendLog(`${getElapsed()} ✓ SOQL Query matched ${matchCount} record(s) in ${queryLatency}ms.`);
 
           recordedSteps.push({
             nodeId: currentNode.id,
@@ -1903,15 +2229,75 @@ export const WorkflowStudio: React.FC = () => {
 
           <div className="relative min-w-0">
             <div className="flex items-center gap-2 min-w-0">
-              <button
-                type="button"
-                onClick={() => setIsWfSwitcherOpen(!isWfSwitcherOpen)}
-                className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white tracking-tight hover:text-blue-600 dark:hover:text-blue-400 transition-colors group text-left min-w-0"
-                title="Click to switch workflow suite"
-              >
-                <span className="truncate max-w-[200px] md:max-w-xs">{workflow.name}</span>
-                <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-500 transition-transform flex-shrink-0" />
-              </button>
+              {isEditingTitle ? (
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={editedTitle}
+                    onChange={(e) => setEditedTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        if (editedTitle.trim() && workflow) {
+                          const updated = { ...workflow, name: editedTitle.trim() };
+                          setWorkflow(updated);
+                          WorkflowApi.updateWorkflow(workflow.id, { name: editedTitle.trim() }).catch(() => {});
+                        }
+                        setIsEditingTitle(false);
+                      } else if (e.key === 'Escape') {
+                        setIsEditingTitle(false);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (editedTitle.trim() && workflow) {
+                        const updated = { ...workflow, name: editedTitle.trim() };
+                        setWorkflow(updated);
+                        WorkflowApi.updateWorkflow(workflow.id, { name: editedTitle.trim() }).catch(() => {});
+                      }
+                      setIsEditingTitle(false);
+                    }}
+                    className="h-7 px-2 rounded-md bg-white dark:bg-slate-950 border border-blue-500 text-xs font-bold text-slate-900 dark:text-white focus:outline-none shadow-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (editedTitle.trim() && workflow) {
+                        const updated = { ...workflow, name: editedTitle.trim() };
+                        setWorkflow(updated);
+                        WorkflowApi.updateWorkflow(workflow.id, { name: editedTitle.trim() }).catch(() => {});
+                      }
+                      setIsEditingTitle(false);
+                    }}
+                    className="p-1 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                    title="Save Name"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 group/name">
+                  <button
+                    type="button"
+                    onClick={() => setIsWfSwitcherOpen(!isWfSwitcherOpen)}
+                    className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white tracking-tight hover:text-blue-600 dark:hover:text-blue-400 transition-colors group text-left min-w-0"
+                    title="Click to switch workflow suite"
+                  >
+                    <span className="truncate max-w-[200px] md:max-w-xs">{workflow.name}</span>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-500 transition-transform flex-shrink-0" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditedTitle(workflow.name);
+                      setIsEditingTitle(true);
+                    }}
+                    className="opacity-0 group-hover/name:opacity-100 p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-600 transition-opacity"
+                    title="Rename Workflow"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 uppercase flex-shrink-0">
                 {workflow.platform}
               </span>
@@ -2090,8 +2476,8 @@ export const WorkflowStudio: React.FC = () => {
       <div className="flex-1 flex min-h-0 relative">
         {/* Left Node Library Palette (Collapsible & Draggable) */}
         <div className={`${
-          isSidebarOpen ? 'w-72 p-3 border-r' : 'w-0 p-0 border-r-0 overflow-hidden'
-        } bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 space-y-3 overflow-y-auto z-20 flex-shrink-0 transition-all duration-300 ease-in-out`}>
+          isSidebarOpen ? 'w-80 p-3.5 border-r' : 'w-0 p-0 border-r-0 overflow-hidden'
+        } bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 space-y-3.5 overflow-y-auto z-20 flex-shrink-0 transition-all duration-300 ease-in-out`}>
           {isSidebarOpen && (
             <>
               {/* Header */}
@@ -2109,7 +2495,7 @@ export const WorkflowStudio: React.FC = () => {
               </div>
 
               {/* Clean Salesforce Flow Builder Standard Tabs: Elements & Manager */}
-              <div className="flex border-b border-slate-200 dark:border-slate-800 select-none px-1">
+              <div className="flex border-b border-slate-200 dark:border-slate-800 select-none">
                 <button
                   onClick={() => setToolboxTab('elements')}
                   className={`flex-1 py-2 text-xs font-semibold text-center border-b-2 transition-all cursor-pointer ${
@@ -2135,16 +2521,24 @@ export const WorkflowStudio: React.FC = () => {
               {/* TAB 1: ELEMENTS PALETTE */}
               {toolboxTab === 'elements' && (
                 <div className="space-y-3">
-                  {/* Search Bar */}
+                  {/* Search Bar with proper padding and comfortable height */}
                   <div className="relative">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
                       placeholder="Filter elements..."
                       value={toolboxSearch}
                       onChange={(e) => setToolboxSearch(e.target.value)}
-                      className="w-full h-7.5 pl-8 pr-2.5 text-[11px] rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                      className="w-full h-9 pl-9 pr-8 text-xs rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-1.5 focus:ring-blue-500 font-medium transition-all"
                     />
+                    {toolboxSearch && (
+                      <button 
+                        onClick={() => setToolboxSearch('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
 
                   {/* Section: Data Elements */}
@@ -2641,19 +3035,32 @@ export const WorkflowStudio: React.FC = () => {
 
         {/* Right Configuration Drawer (Salesforce Flow Card Inspector) */}
         {selectedNode && (
-          <div className="w-96 bg-white/95 dark:bg-slate-900/95 border-l border-slate-200 dark:border-slate-800 p-5 space-y-5 overflow-y-auto z-20 flex-shrink-0 animate-in slide-in-from-right duration-200 shadow-2xl transition-colors">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <div>
-                <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider font-mono">
+          <div 
+            style={{ width: `${inspectorWidth}px` }}
+            className="relative bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 p-4 space-y-3.5 overflow-y-auto z-20 flex-shrink-0 animate-in slide-in-from-right duration-200 shadow-xl transition-[width]"
+          >
+            {/* Drag Handle to Resize Inspector Width */}
+            <div
+              onMouseDown={() => setIsResizingInspector(true)}
+              className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-sky-500/50 active:bg-sky-500 transition-colors z-30 flex items-center justify-center group"
+              title="Drag to resize panel"
+            >
+              <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-700 group-hover:bg-sky-400 rounded-full" />
+            </div>
+
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-900 dark:text-white uppercase tracking-wider font-mono">
                   Element Inspector
-                </h3>
-                <div className="text-[10px] font-mono text-slate-500">
-                  NODE ID: {selectedNode.id}
-                </div>
+                </span>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold uppercase">
+                  {String(selectedNode.data?.nodeType || 'NODE')}
+                </span>
               </div>
               <button 
                 onClick={() => setSelectedNode(null)}
-                className="text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs p-1"
+                className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-xs"
+                title="Close Inspector"
               >
                 ✕
               </button>
@@ -2687,320 +3094,333 @@ export const WorkflowStudio: React.FC = () => {
                         setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: updatedData } : n));
                         setSelectedNode({ ...selectedNode, data: updatedData });
                       }}
-                      className="w-full h-8 px-3 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 font-medium"
+                      className="w-full h-8 px-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-sky-500 font-medium"
                     />
                   </div>
 
-                  {/* 1. CREATE RECORDS INSPECTOR */}
+                  {/* 1. CREATE RECORDS INSPECTOR (Exact Colleagues Design & Backend-Driven) */}
                   {(nodeType === 'CREATE' || nodeType === 'SF_CREATE') && (() => {
-                    const currentObj = String(nodeConfig.customObject || nodeConfig.object || 'Account');
-                    const isCustomObjSelected = nodeConfig.isCustomObject || (currentObj !== 'Account' && currentObj !== 'Opportunity' && currentObj !== 'Contact' && currentObj !== 'Lead' && currentObj !== 'Case' && currentObj !== 'Order' && currentObj !== 'Contract' && currentObj !== 'Product2' && currentObj !== 'SBQQ__Quote__c' && currentObj !== 'SBQQ__QuoteLine__c');
+                    const currentObj = String(nodeConfig.customObject || nodeConfig.object || '');
+
+                    // Default stepKey if not present: lowercase of sobject (e.g., account, sbqq__quote__c)
+                    const stepKey = String(nodeConfig.stepKey || nodeConfig.outputVariable || (currentObj ? currentObj.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_') : ''));
+
+                    // Automatically fetch fields for the current object if not already cached
+                    if (currentObj && !objectFieldsMap[currentObj] && !isLoadingFields) {
+                      void fetchSObjectFields(currentObj);
+                    }
                     
-                    const rawFields = nodeConfig.fields || { Name: 'New Test Account', Type: 'Customer - Direct' };
-                    const fieldEntries: Array<{ field: string; value: string }> = Array.isArray(nodeConfig.fieldList)
-                      ? nodeConfig.fieldList
-                      : Object.entries(rawFields).map(([k, v]) => ({ field: k, value: String(v) }));
+                    const rawFields = nodeConfig.fields || {};
 
-                    const updateFields = (entries: Array<{ field: string; value: string }>) => {
-                      const fieldsMap: Record<string, string> = {};
-                      entries.forEach(e => {
-                        if (e.field.trim()) fieldsMap[e.field.trim()] = e.value;
+                    const updateFieldValue = (fieldName: string, val: string) => {
+                      const nextFields = { ...(nodeConfig.fields || rawFields) };
+                      if (val.trim() === '') {
+                        delete nextFields[fieldName];
+                      } else {
+                        nextFields[fieldName] = val;
+                      }
+                      updateConfig({
+                        fields: nextFields,
+                        fieldList: Object.entries(nextFields).map(([k, v]) => ({ field: k, value: String(v) }))
                       });
-                      updateConfig({ fieldList: entries, fields: fieldsMap });
                     };
 
-                    const objectFieldPresets: Record<string, string[]> = {
-                      Account: ['Name', 'Type', 'Phone', 'BillingCity', 'BillingCountry', 'Industry', 'AnnualRevenue', 'Website', 'Rating'],
-                      Contact: ['FirstName', 'LastName', 'Email', 'Phone', 'Title', 'Department', 'AccountId', 'MobilePhone'],
-                      Opportunity: ['Name', 'StageName', 'CloseDate', 'Amount', 'Type', 'LeadSource', 'Probability', 'AccountId'],
-                      Lead: ['FirstName', 'LastName', 'Company', 'Status', 'Email', 'Phone', 'Title', 'LeadSource'],
-                      Case: ['Subject', 'Status', 'Priority', 'Origin', 'Description', 'AccountId', 'ContactId'],
-                      Order: ['AccountId', 'EffectiveDate', 'Status', 'Pricebook2Id', 'TotalAmount'],
-                      Contract: ['AccountId', 'StartDate', 'ContractTerm', 'Status'],
-                      Product2: ['Name', 'ProductCode', 'IsActive', 'Family', 'Description'],
-                      'SBQQ__Quote__c': ['SBQQ__Account__c', 'SBQQ__Opportunity2__c', 'SBQQ__Status__c', 'SBQQ__Type__c', 'SBQQ__StartDate__c', 'SBQQ__SubscriptionTerm__c', 'SBQQ__Primary__c'],
-                      'SBQQ__QuoteLine__c': ['SBQQ__Quote__c', 'SBQQ__Product__c', 'SBQQ__Quantity__c', 'SBQQ__ListPrice__c', 'SBQQ__NetPrice__c']
-                    };
+                    // Live fields loaded from Salesforce via backend jsforce
+                    const liveObjectFields = currentObj ? (objectFieldsMap[currentObj] || []) : [];
+                    
+                    // Filter fields based on search bar
+                    const filteredFields = liveObjectFields.filter(f => 
+                      !fieldSearchQuery || 
+                      f.name.toLowerCase().includes(fieldSearchQuery.toLowerCase()) || 
+                      f.label.toLowerCase().includes(fieldSearchQuery.toLowerCase())
+                    );
 
-                    const suggestedFields = objectFieldPresets[currentObj] || ['Name', 'Type', 'Status', 'Description', 'External_Id__c'];
+                    // Mapped field count
+                    const activeMappedCount = Object.keys(nodeConfig.fields || rawFields).filter(k => Boolean(nodeConfig.fields?.[k] || rawFields[k])).length;
+
+                    // Filtered SObjects for searchable dropdown
+                    const allSObjectsList = availableSObjects.length > 0 ? availableSObjects : [
+                      { name: 'Account', label: 'Account', custom: false },
+                      { name: 'Contact', label: 'Contact', custom: false },
+                      { name: 'Opportunity', label: 'Opportunity', custom: false },
+                      { name: 'Lead', label: 'Lead', custom: false },
+                      { name: 'Case', label: 'Case', custom: false },
+                      { name: 'SBQQ__Quote__c', label: 'Quote', custom: true }
+                    ];
+
+                    const filteredSObjects = allSObjectsList.filter(o => 
+                      !objectSearchTerm || 
+                      o.name.toLowerCase().includes(objectSearchTerm.toLowerCase()) || 
+                      o.label.toLowerCase().includes(objectSearchTerm.toLowerCase())
+                    );
+
+                    const selectedObjMeta = allSObjectsList.find(o => o.name.toLowerCase() === currentObj.toLowerCase());
 
                     return (
-                      <div className="space-y-3.5 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                      <div className="space-y-4">
                         {/* Header Badge */}
-                        <div className="text-[10px] font-mono font-bold text-sky-600 dark:text-sky-400 uppercase flex items-center justify-between pb-1 border-b border-slate-200 dark:border-slate-800">
-                          <span className="flex items-center gap-1.5">
+                        <div className="flex items-center justify-between pb-1 border-b border-slate-100 dark:border-slate-800">
+                          <span className="text-[11px] font-mono font-bold text-sky-600 dark:text-sky-400 uppercase flex items-center gap-1.5">
                             <Plus className="w-3.5 h-3.5" />
-                            Create Records Configuration
+                            CREATE RECORDS CONFIGURATION
                           </span>
-                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 border border-sky-500/20 font-semibold">
+                          <span className="text-[9px] px-2 py-0.5 rounded bg-sky-500/10 text-sky-500 border border-sky-500/20 font-semibold font-mono">
                             DML INSERT
                           </span>
                         </div>
 
-                        {/* 1. How Many Records to Create */}
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                            How Many Records to Create
-                          </label>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => updateConfig({ recordCount: 'ONE' })}
-                              className={`h-7 px-2 rounded-lg text-[11px] font-medium border flex items-center justify-center transition-all cursor-pointer ${
-                                (nodeConfig.recordCount || 'ONE') === 'ONE'
-                                  ? 'bg-sky-500 text-white border-sky-600 shadow-2xs font-semibold'
-                                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                              }`}
-                            >
-                              One (Single Record)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => updateConfig({ recordCount: 'MULTIPLE' })}
-                              className={`h-7 px-2 rounded-lg text-[11px] font-medium border flex items-center justify-center transition-all cursor-pointer ${
-                                nodeConfig.recordCount === 'MULTIPLE'
-                                  ? 'bg-sky-500 text-white border-sky-600 shadow-2xs font-semibold'
-                                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                              }`}
-                            >
-                              Multiple (Collection)
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* 2. How to Set the Record Fields */}
-                        <div>
-                          <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                            How to Set the Record Fields
-                          </label>
-                          <select
-                            value={String(nodeConfig.fieldSettingMode || 'SEPARATE')}
-                            onChange={(e) => updateConfig({ fieldSettingMode: e.target.value })}
-                            className="w-full h-8 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 font-medium"
-                          >
-                            <option value="SEPARATE">Use separate resources, and literal values</option>
-                            <option value="RECORD_VAR">Use all values from a record variable</option>
-                          </select>
-                        </div>
-
-                        {/* 3. Target sObject Selection */}
-                        <div>
+                        {/* Searchable Target Object (sObject) Picker */}
+                        <div className="relative">
                           <div className="flex items-center justify-between mb-1">
-                            <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                              Target Object (sObject)
+                            <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                              Target Object (sObject) *
                             </label>
-                            {isCustomObjSelected && (
-                              <span className="text-[9px] font-mono font-semibold text-purple-600 dark:text-purple-400 uppercase">
-                                Custom Object Mode
+                            {isLoadingSObjects && (
+                              <span className="text-[9px] font-mono text-sky-500 flex items-center gap-1 animate-pulse">
+                                <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                                Fetching objects...
                               </span>
                             )}
                           </div>
-                          <select 
-                            value={isCustomObjSelected ? 'Custom' : currentObj}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === 'Custom') {
-                                updateConfig({ isCustomObject: true, customObject: 'Custom_Entity__c', object: 'Custom_Entity__c' });
-                              } else {
-                                updateConfig({ isCustomObject: false, customObject: '', object: val });
-                              }
-                            }}
-                            className="w-full h-8 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 font-medium"
+
+                          {/* Object Selector Trigger */}
+                          <div
+                            onClick={() => setIsObjectDropdownOpen(!isObjectDropdownOpen)}
+                            className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 flex items-center justify-between text-xs cursor-pointer hover:border-sky-500 shadow-2xs transition-colors"
                           >
-                            <optgroup label="Standard Salesforce Objects">
-                              <option value="Account">Account (CRM Core)</option>
-                              <option value="Contact">Contact (Person / Buyer)</option>
-                              <option value="Opportunity">Opportunity (Deals & Pipeline)</option>
-                              <option value="Lead">Lead (Prospect)</option>
-                              <option value="Case">Case (Support Ticket)</option>
-                              <option value="Order">Order (Transaction)</option>
-                              <option value="Contract">Contract (Agreements)</option>
-                              <option value="Product2">Product2 (Catalog)</option>
-                            </optgroup>
-                            <optgroup label="Salesforce CPQ & Billing Objects">
-                              <option value="SBQQ__Quote__c">SBQQ__Quote__c (CPQ Quote)</option>
-                              <option value="SBQQ__QuoteLine__c">SBQQ__QuoteLine__c (CPQ Line Item)</option>
-                            </optgroup>
-                            <optgroup label="Custom Objects">
-                              <option value="Custom">Custom sObject (Specify API Name)...</option>
-                            </optgroup>
-                          </select>
-
-                          {/* Custom sObject API Name input */}
-                          {isCustomObjSelected && (
-                            <div className="mt-1.5">
-                              <input
-                                type="text"
-                                value={String(nodeConfig.customObject || nodeConfig.object || '')}
-                                placeholder="e.g. Integration_Audit__c"
-                                onChange={(e) => updateConfig({ customObject: e.target.value, object: e.target.value })}
-                                className="w-full h-7 px-2.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-800 text-xs font-mono text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-purple-500"
-                              />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* 4. Dynamic Field Values Mapping Grid */}
-                        <div>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                              Set Field Values for the {currentObj}
-                            </label>
-                            <span className="text-[10px] font-mono text-slate-400">
-                              {fieldEntries.length} field{fieldEntries.length === 1 ? '' : 's'}
+                            <span className={currentObj ? "font-semibold text-slate-900 dark:text-white" : "text-slate-400 font-medium"}>
+                              {currentObj ? (selectedObjMeta ? `${selectedObjMeta.label} (${selectedObjMeta.name})` : currentObj) : '-- Select the sObject --'}
                             </span>
+                            <ChevronDown className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                           </div>
 
-                          <div className="space-y-1.5">
-                            {fieldEntries.map((entry, idx) => (
-                              <div key={idx} className="flex items-center gap-1.5 p-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xs">
-                                {/* Field Name input with suggestions */}
-                                <div className="w-5/12">
-                                  <input 
+                          {/* Searchable Dropdown Popup */}
+                          {isObjectDropdownOpen && (
+                            <>
+                              <div className="fixed inset-0 z-40" onClick={() => setIsObjectDropdownOpen(false)} />
+                              <div className="absolute left-0 right-0 top-full mt-1 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150 space-y-2">
+                                <div className="relative">
+                                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                  <input
                                     type="text"
-                                    list={`field-datalist-${idx}`}
-                                    value={entry.field}
-                                    placeholder="Field API Name"
-                                    onChange={(e) => {
-                                      const next = [...fieldEntries];
-                                      next[idx] = { ...next[idx], field: e.target.value };
-                                      updateFields(next);
-                                    }}
-                                    className="w-full h-7 px-2 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px] font-mono font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-500"
-                                  />
-                                  <datalist id={`field-datalist-${idx}`}>
-                                    {suggestedFields.map(sf => (
-                                      <option key={sf} value={sf} />
-                                    ))}
-                                  </datalist>
-                                </div>
-
-                                <span className="text-slate-400 text-xs font-mono flex-shrink-0">=</span>
-
-                                {/* Field Value input */}
-                                <div className="flex-1 min-w-0">
-                                  <input 
-                                    type="text"
-                                    value={entry.value}
-                                    placeholder="Value or {{var}}"
-                                    onChange={(e) => {
-                                      const next = [...fieldEntries];
-                                      next[idx] = { ...next[idx], value: e.target.value };
-                                      updateFields(next);
-                                    }}
-                                    className="w-full h-7 px-2 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px] font-mono text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-500"
+                                    autoFocus
+                                    value={objectSearchTerm}
+                                    onChange={(e) => setObjectSearchTerm(e.target.value)}
+                                    placeholder="Search Salesforce objects..."
+                                    className="w-full h-8 pl-8 pr-2.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-sky-500"
                                   />
                                 </div>
 
-                                {/* Delete Field Row */}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const next = fieldEntries.filter((_, i) => i !== idx);
-                                    updateFields(next);
-                                  }}
-                                  className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-colors cursor-pointer flex-shrink-0"
-                                  title="Delete field mapping"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+                                  {filteredSObjects.length === 0 ? (
+                                    <div className="p-3 text-center text-xs text-slate-400">
+                                      No objects matching "{objectSearchTerm}"
+                                    </div>
+                                  ) : (
+                                    filteredSObjects.map(obj => (
+                                      <button
+                                        key={obj.name}
+                                        type="button"
+                                        onClick={() => {
+                                          const val = obj.name;
+                                          const newStepKey = val.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+                                          updateConfig({ 
+                                            object: val, 
+                                            customObject: val.includes('__c') ? val : '',
+                                            isCustomObject: val.includes('__c'),
+                                            stepKey: newStepKey,
+                                            outputVariable: `var_${newStepKey}_id`,
+                                            operation: `Create Records (${obj.label})`
+                                          });
+                                          setIsObjectDropdownOpen(false);
+                                          setObjectSearchTerm('');
+                                          void fetchSObjectFields(val);
+                                        }}
+                                        className={`w-full p-2 rounded-lg text-left text-xs flex items-center justify-between transition-colors ${
+                                          currentObj.toLowerCase() === obj.name.toLowerCase()
+                                            ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold'
+                                            : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200'
+                                        }`}
+                                      >
+                                        <div className="truncate">
+                                          <span className="font-medium">{obj.label}</span>
+                                          <span className="text-[11px] text-slate-400 font-mono ml-1.5">({obj.name})</span>
+                                        </div>
+                                        {obj.custom && (
+                                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 uppercase font-bold flex-shrink-0">
+                                            Custom
+                                          </span>
+                                        )}
+                                      </button>
+                                    ))
+                                  )}
+                                </div>
                               </div>
-                            ))}
-                          </div>
-
-                          {/* Add Field Button & Quick Helpers */}
-                          <div className="flex items-center justify-between pt-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateFields([...fieldEntries, { field: '', value: '' }]);
-                              }}
-                              className="h-7 px-2.5 rounded-lg border border-dashed border-sky-400 dark:border-sky-600 bg-sky-50/50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950 text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Add Field</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                updateFields([
-                                  ...fieldEntries, 
-                                  { field: 'Description', value: `AssertNow QA Test Run · ${new Date().toLocaleTimeString()}` }
-                                ]);
-                              }}
-                              className="text-[10px] text-slate-500 hover:text-blue-600 transition-colors cursor-pointer"
-                            >
-                              + Add Timestamp Note
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* 5. Assign Created Record ID to Variable (Output Handling) */}
-                        <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={nodeConfig.storeRecordId !== false}
-                              onChange={(e) => updateConfig({ storeRecordId: e.target.checked })}
-                              className="rounded text-sky-600 focus:ring-0"
-                            />
-                            <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-200">
-                              Store Created Record ID to Variable
-                            </span>
-                          </label>
-
-                          {nodeConfig.storeRecordId !== false && (
-                            <div className="pl-5 space-y-1">
-                              <input
-                                type="text"
-                                value={String(nodeConfig.outputVariable || 'varCreatedRecordId')}
-                                placeholder="e.g. varAccountId or newRecordId"
-                                onChange={(e) => updateConfig({ outputVariable: e.target.value })}
-                                className="w-full h-7 px-2.5 rounded bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 text-[11px] font-mono text-slate-900 dark:text-white"
-                              />
-                              <div className="text-[10px] text-slate-500">
-                                Downstream steps can reference this record via <code className="font-mono text-sky-600 bg-sky-50 dark:bg-sky-950 px-1 py-0.5 rounded">{"{{"}{String(nodeConfig.outputVariable || 'varCreatedRecordId')}{"}}"}</code>
-                              </div>
-                            </div>
+                            </>
                           )}
                         </div>
 
-                        {/* 6. Execution Rules & Automated Rollback / Teardown (Enterprise QA) */}
-                        <div className="pt-2.5 border-t border-slate-200 dark:border-slate-800 space-y-2">
-                          <div className="text-[10px] font-mono font-bold text-slate-400 uppercase">
-                            Execution & Quality Rules
+                        {/* Show Configuration & Field mapping ONLY after SObject is selected */}
+                        {!currentObj ? (
+                          <div className="p-8 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/30 space-y-2">
+                            <div className="w-10 h-10 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center mx-auto font-bold text-sm">
+                              SF
+                            </div>
+                            <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                              Select an sObject to Configure
+                            </h4>
+                            <p className="text-[11px] text-slate-400 max-w-xs mx-auto leading-relaxed">
+                              Choose a standard or custom Salesforce object from the dropdown above to load its real-time schema and fields.
+                            </p>
                           </div>
-
-                          <label className="flex items-start gap-2 cursor-pointer p-2 rounded-lg bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60">
-                            <input
-                              type="checkbox"
-                              checked={nodeConfig.autoTeardown !== false}
-                              onChange={(e) => updateConfig({ autoTeardown: e.target.checked })}
-                              className="mt-0.5 rounded text-emerald-600 focus:ring-0"
-                            />
-                            <div className="text-[11px]">
-                              <div className="font-semibold text-emerald-800 dark:text-emerald-300">
-                                Auto-Rollback on Test Teardown
-                              </div>
-                              <div className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80 leading-snug">
-                                Automatically issues a DML Delete on this record after regression suite finishes to prevent test data pollution.
+                        ) : (
+                          <>
+                            {/* Step Key / Variable Name Card */}
+                            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 space-y-2">
+                              <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                                Step Key / Variable Name
+                              </label>
+                              <input
+                                type="text"
+                                value={stepKey}
+                                placeholder="e.g. account or sbqq__quote__c"
+                                onChange={(e) => {
+                                  const val = e.target.value.toLowerCase().replace(/[^a-zA-Z0-9_]/g, '_');
+                                  updateConfig({ 
+                                    stepKey: val,
+                                    outputVariable: `var_${val}_id`
+                                  });
+                                }}
+                                className="w-full h-8 px-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-sky-500"
+                              />
+                              <div className="flex items-center gap-2 pt-0.5">
+                                <span className="text-[10px] text-sky-600 dark:text-sky-400 font-mono">Downstream token:</span>
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 font-bold select-all">
+                                  {`{{${stepKey}.id}}`}
+                                </span>
                               </div>
                             </div>
-                          </label>
 
-                          <label className="flex items-center gap-2 cursor-pointer pl-1">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(nodeConfig.bypassValidationRules)}
-                              onChange={(e) => updateConfig({ bypassValidationRules: e.target.checked })}
-                              className="rounded text-sky-600 focus:ring-0"
-                            />
-                            <span className="text-[11px] text-slate-700 dark:text-slate-300">
-                              Bypass Validation Rules & Apex Triggers
-                            </span>
-                          </label>
-                        </div>
+                            {/* Field Values for Object Header */}
+                            <div className="space-y-2 pt-1">
+                              <div className="flex items-center justify-between text-[11px]">
+                                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                  Field Values for {currentObj}
+                                </span>
+                                <span className="text-slate-400 font-mono text-[10px]">
+                                  {activeMappedCount} mapped
+                                </span>
+                              </div>
+
+                              {/* Search Filter for fields */}
+                              <div className="relative">
+                                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                                <input
+                                  type="text"
+                                  value={fieldSearchQuery}
+                                  onChange={(e) => setFieldSearchQuery(e.target.value)}
+                                  placeholder="Filter fields by name or label..."
+                                  className="w-full h-8 pl-8 pr-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-sky-500"
+                                />
+                                {fieldSearchQuery && (
+                                  <button 
+                                    onClick={() => setFieldSearchQuery('')}
+                                    className="absolute right-2.5 top-2.5 text-xs text-slate-400 hover:text-slate-600"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Loading indicator */}
+                              {isLoadingFields && (
+                                <div className="py-4 text-center text-xs font-mono text-sky-500 flex items-center justify-center gap-1.5 animate-pulse">
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  Loading schema from Salesforce...
+                                </div>
+                              )}
+
+                              {/* Dynamic Field Rows (Smart Input: Dropdown for Picklist, Lookup for Reference, Text for others) */}
+                              <div className="space-y-3 max-h-[440px] overflow-y-auto pr-1">
+                                {filteredFields.length > 0 ? (
+                                  filteredFields.map(f => {
+                                    const currentValue = (nodeConfig.fields || rawFields)[f.name] || '';
+                                    const isReference = f.type.toLowerCase().includes('reference') || f.name.endsWith('Id') || f.name.endsWith('__c');
+                                    const isPicklist = f.type.toLowerCase().includes('picklist');
+                                    const picklistOptions = (f as any).picklistValues || [];
+                                    
+                                    return (
+                                      <div key={f.name} className="p-3 rounded-xl bg-slate-50/80 dark:bg-slate-950/80 border border-slate-200/90 dark:border-slate-800/90 shadow-2xs space-y-2">
+                                        <div className="flex items-center justify-between text-xs">
+                                          <div className="flex items-center gap-1.5 truncate">
+                                            <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                              {f.label}
+                                            </span>
+                                            <span className="text-[11px] text-slate-400 font-mono truncate">
+                                              ({f.name})
+                                            </span>
+                                            {f.required && (
+                                              <span className="text-rose-500 font-bold text-sm" title="Required Field">*</span>
+                                            )}
+                                          </div>
+                                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-400 uppercase font-semibold">
+                                            {f.type}
+                                          </span>
+                                        </div>
+
+                                        {/* Picklist Type -> Render Select Dropdown */}
+                                        {isPicklist && picklistOptions.length > 0 ? (
+                                          <div className="flex items-center gap-2">
+                                            <select
+                                              value={currentValue}
+                                              onChange={(e) => updateFieldValue(f.name, e.target.value)}
+                                              className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1.5 focus:ring-sky-500 cursor-pointer shadow-2xs"
+                                            >
+                                              <option value="">-- Select {f.label} --</option>
+                                              {picklistOptions.map((opt: any) => (
+                                                <option key={opt.value} value={opt.value}>
+                                                  {opt.label || opt.value}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          </div>
+                                        ) : (
+                                          /* Other Types (Reference / Text / Number) */
+                                          <div className="flex items-center gap-2">
+                                            <input
+                                              type="text"
+                                              value={currentValue}
+                                              onChange={(e) => updateFieldValue(f.name, e.target.value)}
+                                              placeholder={isReference ? `e.g. {{account.id}} or 001...` : `Enter ${f.label}...`}
+                                              className="flex-1 h-9 px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-1.5 focus:ring-sky-500 shadow-2xs"
+                                            />
+
+                                            {/* Lookup Button only for Reference/ID fields */}
+                                            {isReference && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleOpenLookupModal(f.name, f.label, (f as any).referenceTo || [])}
+                                                className="h-9 px-3 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 hover:border-sky-500 text-sky-600 dark:text-sky-400 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer flex-shrink-0 shadow-2xs"
+                                                title="Assign from flow context token or existing Salesforce record"
+                                              >
+                                                <Search className="w-3.5 h-3.5" />
+                                                <span>Lookup</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })
+                                ) : !isLoadingFields ? (
+                                  <div className="p-4 text-center text-xs text-slate-400 italic">
+                                    {fieldSearchQuery ? `No fields matching "${fieldSearchQuery}"` : 'No fields found for this object.'}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
                     );
                   })()}
@@ -3713,6 +4133,188 @@ export const WorkflowStudio: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Lookup Modal: Flow Upstream Context Tokens OR Real Salesforce Org Records */}
+      {activeLookupField && selectedNode && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center font-bold">
+                  <Search className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-900 dark:text-white">
+                    Lookup: {activeLookupField.fieldLabel}
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-mono">
+                    Field: {activeLookupField.fieldName}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveLookupField(null)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Tabs: Within Flow Context VS Existed Salesforce Org Records */}
+            <div className="flex border-b border-slate-200 dark:border-slate-800 bg-slate-100/50 dark:bg-slate-950/50 p-1 gap-1">
+              <button
+                type="button"
+                onClick={() => setLookupActiveTab('flow')}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  lookupActiveTab === 'flow'
+                    ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-2xs border border-slate-200 dark:border-slate-800'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <span>Flow Variables ({availableUpstreamTokens.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLookupActiveTab('org')}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  lookupActiveTab === 'org'
+                    ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-2xs border border-slate-200 dark:border-slate-800'
+                    : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <span>Existed Org Records</span>
+              </button>
+            </div>
+
+            {/* Search Bar */}
+            <div className="p-3 border-b border-slate-100 dark:border-slate-800">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
+                <input
+                  type="text"
+                  value={lookupSearchTerm}
+                  onChange={(e) => setLookupSearchTerm(e.target.value)}
+                  placeholder={lookupActiveTab === 'flow' ? "Filter flow tokens..." : "Search existing Salesforce records..."}
+                  className="w-full h-8 pl-8 pr-3 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-sky-500"
+                />
+              </div>
+            </div>
+
+            {/* Content List */}
+            <div className="p-3 max-h-64 overflow-y-auto space-y-1.5">
+              {lookupActiveTab === 'flow' ? (
+                /* TAB 1: FLOW TOKENS (Created within this execution / upstream nodes) */
+                <>
+                  {availableUpstreamTokens.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-slate-400 space-y-1">
+                      <p>No upstream record variables available yet.</p>
+                      <p className="text-[10px] text-slate-500">
+                        Create an Account, Contact, or Quote node before this step to reference it!
+                      </p>
+                    </div>
+                  ) : (
+                    availableUpstreamTokens
+                      .filter(v => !lookupSearchTerm || v.token.toLowerCase().includes(lookupSearchTerm.toLowerCase()) || v.label.toLowerCase().includes(lookupSearchTerm.toLowerCase()) || v.sobject.toLowerCase().includes(lookupSearchTerm.toLowerCase()))
+                      .map(v => (
+                        <div
+                          key={v.token}
+                          onClick={() => {
+                            const nodeConfig = ((selectedNode.data || {}).config || {}) as Record<string, any>;
+                            const nextFields = { ...(nodeConfig.fields || {}) };
+                            nextFields[activeLookupField.fieldName] = v.token;
+                            
+                            const updatedConfig = { 
+                              ...nodeConfig, 
+                              fields: nextFields,
+                              fieldList: Object.entries(nextFields).map(([k, val]) => ({ field: k, value: String(val) }))
+                            };
+                            const updatedData = { ...selectedNode.data, config: updatedConfig };
+                            setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: updatedData } : n));
+                            setSelectedNode({ ...selectedNode, data: updatedData });
+                            setActiveLookupField(null);
+                          }}
+                          className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 hover:border-sky-400 dark:hover:border-sky-500 hover:bg-sky-50/40 dark:hover:bg-sky-950/30 flex items-center justify-between cursor-pointer transition-all group"
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-sky-600 dark:group-hover:text-sky-400">
+                              {v.token}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {v.label} · {v.sobject}
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold border border-sky-500/20">
+                            Insert
+                          </span>
+                        </div>
+                      ))
+                  )}
+                </>
+              ) : (
+                /* TAB 2: ORG RECORDS (Existed Salesforce CRM records) */
+                <>
+                  {isLoadingOrgRecords ? (
+                    <div className="py-6 text-center text-xs text-sky-500 flex items-center justify-center gap-1.5 animate-pulse font-mono">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      Fetching existing records from Salesforce...
+                    </div>
+                  ) : existingOrgRecords.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-slate-400">
+                      No records found.
+                    </div>
+                  ) : (
+                    existingOrgRecords
+                      .filter(r => !lookupSearchTerm || r.name.toLowerCase().includes(lookupSearchTerm.toLowerCase()) || r.id.toLowerCase().includes(lookupSearchTerm.toLowerCase()))
+                      .map(r => (
+                        <div
+                          key={r.id}
+                          onClick={() => {
+                            const nodeConfig = ((selectedNode.data || {}).config || {}) as Record<string, any>;
+                            const nextFields = { ...(nodeConfig.fields || {}) };
+                            nextFields[activeLookupField.fieldName] = r.id;
+                            
+                            const updatedConfig = { 
+                              ...nodeConfig, 
+                              fields: nextFields,
+                              fieldList: Object.entries(nextFields).map(([k, val]) => ({ field: k, value: String(val) }))
+                            };
+                            const updatedData = { ...selectedNode.data, config: updatedConfig };
+                            setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: updatedData } : n));
+                            setSelectedNode({ ...selectedNode, data: updatedData });
+                            setActiveLookupField(null);
+                          }}
+                          className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 hover:border-emerald-400 dark:hover:border-emerald-500 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/30 flex items-center justify-between cursor-pointer transition-all group"
+                        >
+                          <div>
+                            <div className="text-xs font-bold text-slate-800 dark:text-slate-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400">
+                              {r.name}
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-400">
+                              ID: {r.id}
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/20">
+                            Bind ID
+                          </span>
+                        </div>
+                      ))
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="p-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setActiveLookupField(null)}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

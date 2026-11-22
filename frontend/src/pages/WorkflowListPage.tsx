@@ -12,6 +12,7 @@ import {
   Tag, 
   Copy, 
   Trash2, 
+  Edit3,
   MoreVertical,
   Zap,
   RefreshCw
@@ -40,6 +41,16 @@ export const WorkflowListPage: React.FC = () => {
   // New Workflow form
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+
+  // Edit Workflow State
+  const [editingWorkflow, setEditingWorkflow] = useState<WorkflowDefinition | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  // Delete Workflow State
+  const [deletingWorkflow, setDeletingWorkflow] = useState<WorkflowDefinition | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchWorkflows = useCallback(async () => {
     setIsLoading(true);
@@ -83,6 +94,53 @@ export const WorkflowListPage: React.FC = () => {
       alert(`Workflow Creation Failed: ${err.message}`);
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleOpenEditModal = (e: React.MouseEvent, wf: WorkflowDefinition) => {
+    e.stopPropagation();
+    setEditingWorkflow(wf);
+    setEditName(wf.name);
+    setEditDesc(wf.description || '');
+  };
+
+  const handleUpdateWorkflow = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingWorkflow || !editName.trim()) return;
+
+    setIsUpdating(true);
+    try {
+      const updated = await WorkflowApi.updateWorkflow(editingWorkflow.id, {
+        name: editName.trim(),
+        description: editDesc.trim(),
+      });
+
+      setWorkflows(prev => prev.map(w => w.id === updated.id ? updated : w));
+      setEditingWorkflow(null);
+    } catch (err: any) {
+      alert(`Failed to update workflow: ${err.message}`);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleOpenDeleteModal = (e: React.MouseEvent, wf: WorkflowDefinition) => {
+    e.stopPropagation();
+    setDeletingWorkflow(wf);
+  };
+
+  const handleDeleteWorkflow = async () => {
+    if (!deletingWorkflow) return;
+
+    setIsDeleting(true);
+    try {
+      await WorkflowApi.deleteWorkflow(deletingWorkflow.id);
+      setWorkflows(prev => prev.filter(w => w.id !== deletingWorkflow.id));
+      setDeletingWorkflow(null);
+    } catch (err: any) {
+      alert(`Failed to delete workflow: ${err.message}`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -165,9 +223,28 @@ export const WorkflowListPage: React.FC = () => {
                       SALESFORCE
                     </Badge>
 
-                    <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                      v{wf.version} • {wf.status}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                        v{wf.version} • {wf.status}
+                      </span>
+                      {/* Action buttons: Edit & Delete */}
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenEditModal(e, wf)}
+                        className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 transition-colors"
+                        title="Edit Workflow Title & Description"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenDeleteModal(e, wf)}
+                        className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors"
+                        title="Delete Workflow"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <h3 
@@ -200,6 +277,94 @@ export const WorkflowListPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Edit Workflow Dialog */}
+      <Dialog open={!!editingWorkflow} onOpenChange={(open) => !open && setEditingWorkflow(null)}>
+        <DialogContent onClose={() => setEditingWorkflow(null)}>
+          <DialogHeader>
+            <DialogTitle>Edit Workflow Details</DialogTitle>
+            <DialogDescription>
+              Rename your workflow suite or update its description.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleUpdateWorkflow} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Workflow Title</label>
+              <Input 
+                type="text" 
+                required
+                value={editName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditName(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Business Scope / Description</label>
+              <textarea 
+                rows={3}
+                value={editDesc}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setEditDesc(e.target.value)}
+                className="flex w-full rounded-md border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900/80 px-3 py-2 text-sm shadow-sm placeholder:text-slate-400 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary text-slate-900 dark:text-slate-100"
+              />
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditingWorkflow(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isUpdating}
+                className="gap-1.5"
+              >
+                {isUpdating && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                <span>{isUpdating ? 'Saving...' : 'Save Changes'}</span>
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deletingWorkflow} onOpenChange={(open) => !open && setDeletingWorkflow(null)}>
+        <DialogContent onClose={() => setDeletingWorkflow(null)}>
+          <DialogHeader>
+            <DialogTitle className="text-rose-600 dark:text-rose-400">Delete Workflow</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <span className="font-semibold text-slate-900 dark:text-white font-mono">"{deletingWorkflow?.name}"</span>? This will permanently remove the flow and its execution graph.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setDeletingWorkflow(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={isDeleting}
+              onClick={handleDeleteWorkflow}
+              className="gap-1.5 bg-rose-600 hover:bg-rose-500 text-white"
+            >
+              {isDeleting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              <span>{isDeleting ? 'Deleting...' : 'Delete Workflow'}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Workflow Dialog (shadcn Dialog) */}
       <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
