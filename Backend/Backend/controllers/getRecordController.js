@@ -1,6 +1,5 @@
 import getRecordModel from '../models/getRecordModel.js';
 
-
 // GET /api/salesforce/get-record/objects
 export const getObjectsForGetRecord = async (req, res) => {
     try {
@@ -18,11 +17,9 @@ export const getObjectsForGetRecord = async (req, res) => {
     }
 };
 
-
 // GET /api/salesforce/get-record/fields?sobject=Account
 export const getFieldsForGetRecord = async (req, res) => {
     const { sobject } = req.query;
-
 
     if (!sobject || typeof sobject !== 'string') {
         return res.status(400).json({
@@ -30,7 +27,6 @@ export const getFieldsForGetRecord = async (req, res) => {
             message: 'Query parameter "sobject" is required (e.g., ?sobject=Account).'
         });
     }
-
 
     try {
         const data = await getRecordModel.getQueryableFields(sobject.trim());
@@ -47,21 +43,17 @@ export const getFieldsForGetRecord = async (req, res) => {
     }
 };
 
-
 // GET /api/salesforce/get-record/:sobject/:id?fields=Id,Name,Industry
 export const getSingleRecordById = async (req, res) => {
     const { sobject, id } = req.params;
     const { fields } = req.query;
-
 
     try {
         const fieldList = typeof fields === 'string' && fields.trim()
             ? fields.split(',').map((f) => f.trim()).filter(Boolean)
             : [];
 
-
         const record = await getRecordModel.getRecordById(sobject.trim(), id.trim(), fieldList);
-
 
         if (!record) {
             return res.status(404).json({
@@ -69,7 +61,6 @@ export const getSingleRecordById = async (req, res) => {
                 message: `${sobject} record with Id "${id}" not found.`
             });
         }
-
 
         return res.status(200).json({
             success: true,
@@ -85,7 +76,6 @@ export const getSingleRecordById = async (req, res) => {
     }
 };
 
-
 // POST /api/salesforce/get-record/query
 export const queryRecords = async (req, res) => {
     const {
@@ -99,14 +89,12 @@ export const queryRecords = async (req, res) => {
         onlyFirstRecord
     } = req.body;
 
-
     if (!sobject || typeof sobject !== 'string') {
         return res.status(400).json({
             success: false,
             message: '"sobject" is required in request body.'
         });
     }
-
 
     try {
         const result = await getRecordModel.queryRecords({
@@ -119,7 +107,6 @@ export const queryRecords = async (req, res) => {
             limit,
             onlyFirstRecord
         });
-
 
         return res.status(200).json({
             success: true,
@@ -134,4 +121,3 @@ export const queryRecords = async (req, res) => {
         });
     }
 };
-

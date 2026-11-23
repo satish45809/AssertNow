@@ -10,9 +10,7 @@ import {
     createBulkRecords
 } from '../controllers/recordController.js';
 
-
 const router = Router();
-
 
 router.get('/objects', getObjectsForCreateRecord);
 router.get('/fields', getFieldsBySelectedObject);
@@ -23,4 +21,3 @@ router.post('/execute-flow', executeCreateFlow);
 router.post('/', createRecord);
 router.post('/bulk', createBulkRecords);
 export default router;
-

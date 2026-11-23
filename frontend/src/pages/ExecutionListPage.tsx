@@ -14,6 +14,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
+import { ExportLogsButton } from '@/components/ExportLogsButton';
 import { ExecutionApi } from '@/api/ExecutionApi';
 import { ErrorState } from '@/components/ErrorState';
 import { TestExecution } from '@/types';
@@ -63,6 +64,20 @@ export const ExecutionListPage: React.FC = () => {
       <Header 
         title="Test Runs & Execution Observability" 
         subtitle="Detailed execution timelines, step assertions, and live worker logs"
+        actions={
+          <div className="flex items-center gap-2">
+            <ExportLogsButton label="Export All Logs" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchExecutions}
+              className="h-8 gap-1.5 text-xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+        }
       />
 
       <div className="p-6 space-y-6">

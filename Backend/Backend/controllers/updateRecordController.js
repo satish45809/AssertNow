@@ -1,6 +1,5 @@
 import updateRecordModel from '../models/updateRecordModel.js';
 
-
 // GET /api/salesforce/update-record/objects
 export const getObjectsForUpdateRecord = async (req, res) => {
     try {
@@ -18,11 +17,9 @@ export const getObjectsForUpdateRecord = async (req, res) => {
     }
 };
 
-
 // GET /api/salesforce/update-record/fields?sobject=Opportunity
 export const getFieldsForUpdateRecord = async (req, res) => {
     const { sobject } = req.query;
-
 
     if (!sobject || typeof sobject !== 'string') {
         return res.status(400).json({
@@ -30,7 +27,6 @@ export const getFieldsForUpdateRecord = async (req, res) => {
             message: 'Query parameter "sobject" is required (e.g., ?sobject=Opportunity).'
         });
     }
-
 
     try {
         const data = await updateRecordModel.getUpdateableFields(sobject.trim());
@@ -47,11 +43,9 @@ export const getFieldsForUpdateRecord = async (req, res) => {
     }
 };
 
-
 // GET /api/salesforce/update-record/lookup?sobject=Opportunity&search=Deal&limit=50
 export const getLookupForUpdateRecord = async (req, res) => {
     const { sobject, search, limit } = req.query;
-
 
     if (!sobject || typeof sobject !== 'string') {
         return res.status(400).json({
@@ -59,7 +53,6 @@ export const getLookupForUpdateRecord = async (req, res) => {
             message: 'Query parameter "sobject" is required.'
         });
     }
-
 
     try {
         const records = await updateRecordModel.getRecordsForUpdate(sobject.trim(), search, limit);
@@ -77,12 +70,10 @@ export const getLookupForUpdateRecord = async (req, res) => {
     }
 };
 
-
 // PATCH /api/salesforce/update-record
 // Body: { "sobject": "Opportunity", "recordId": "006...", "data": { "StageName": "Closed Won" } }
 export const updateSingleRecord = async (req, res) => {
     const { sobject, recordId, data } = req.body;
-
 
     if (!sobject || !recordId || !data || typeof data !== 'object' || Array.isArray(data)) {
         return res.status(400).json({
@@ -91,14 +82,12 @@ export const updateSingleRecord = async (req, res) => {
         });
     }
 
-
     try {
         const result = await updateRecordModel.updateRecordById(
             String(sobject).trim(),
             String(recordId).trim(),
             data
         );
-
 
         if (!result.success) {
             return res.status(400).json({
@@ -107,7 +96,6 @@ export const updateSingleRecord = async (req, res) => {
                 errors: result.errors
             });
         }
-
 
         return res.status(200).json({
             success: true,
@@ -124,12 +112,10 @@ export const updateSingleRecord = async (req, res) => {
     }
 };
 
-
 // PATCH /api/salesforce/update-record/bulk
 // Body: { "sobject": "Opportunity", "records": [{ "Id": "006...", "StageName": "Closed Won" }] }
 export const updateBulkRecords = async (req, res) => {
     const { sobject, records } = req.body;
-
 
     if (!sobject || !Array.isArray(records) || records.length === 0) {
         return res.status(400).json({
@@ -137,7 +123,6 @@ export const updateBulkRecords = async (req, res) => {
             message: '"sobject" and non-empty "records" array are required.'
         });
     }
-
 
     try {
         const results = await updateRecordModel.updateMultipleRecords(String(sobject).trim(), records);
@@ -154,4 +139,3 @@ export const updateBulkRecords = async (req, res) => {
         });
     }
 };
-

@@ -16,6 +16,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
+import { ExportLogsButton } from '@/components/ExportLogsButton';
 import { ExecutionApi } from '@/api/ExecutionApi';
 import { ErrorState } from '@/components/ErrorState';
 import { LoadingState } from '@/components/LoadingState';
@@ -93,13 +94,20 @@ export const ExecutionDetailPage: React.FC = () => {
         title={`Execution Details: ${execution.id}`}
         subtitle={`Workflow: ${execution.workflowName} (v${execution.workflowVersion})`}
         actions={
-          <button 
-            onClick={() => navigate('/executions')}
-            className="h-8 px-3 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium flex items-center gap-1.5 transition-colors shadow-sm"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Back to Runs
-          </button>
+          <div className="flex items-center gap-2">
+            <ExportLogsButton
+              logId={execution.id}
+              workflowId={execution.workflowId}
+              workflowName={execution.workflowName}
+            />
+            <button 
+              onClick={() => navigate('/executions')}
+              className="h-8 px-3 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium flex items-center gap-1.5 transition-colors shadow-sm"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back to Runs
+            </button>
+          </div>
         }
       />
 

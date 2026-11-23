@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { 
   Activity, 
@@ -13,7 +13,7 @@ import {
   Sparkles,
   ExternalLink
 } from 'lucide-react';
-import { SalesforceApi } from '@/api/SalesforceApi';
+import { useConnection } from '@/providers/ConnectionProvider';
 
 interface SidebarProps {
   currentOrgName?: string;
@@ -32,22 +32,8 @@ interface NavSection {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentOrgName }) => {
-  const [orgDisplayName, setOrgDisplayName] = useState(currentOrgName || 'AssertNow Org');
-
-  useEffect(() => {
-    if (currentOrgName) {
-      setOrgDisplayName(currentOrgName);
-      return;
-    }
-    SalesforceApi.getEnvironments()
-      .then(envs => {
-        if (Array.isArray(envs) && envs.length > 0) {
-          const active = envs.find(e => e.status === 'ONLINE') || envs[0];
-          setOrgDisplayName(active.name);
-        }
-      })
-      .catch(() => {});
-  }, [currentOrgName]);
+  const { status } = useConnection();
+  const orgDisplayName = currentOrgName || status.name || 'AssertNow Org';
   const navSections: NavSection[] = [
     {
       label: 'COMMAND',

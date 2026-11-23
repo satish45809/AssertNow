@@ -1,11 +1,9 @@
 import createRecordModel from '../models/recordModel.js';
 
-
 // GET /api/salesforce/create-record/objects
 export const getObjectsForCreateRecord = async (req, res) => {
     try {
         const objects = await createRecordModel.getCreateableObjects();
-
 
         return res.status(200).json({
             success: true,
@@ -20,11 +18,9 @@ export const getObjectsForCreateRecord = async (req, res) => {
     }
 };
 
-
 // GET /api/salesforce/create-record/fields?sobject=Opportunity
 export const getFieldsBySelectedObject = async (req, res) => {
     const { sobject } = req.query;
-
 
     if (!sobject || typeof sobject !== 'string') {
         return res.status(400).json({
@@ -33,10 +29,8 @@ export const getFieldsBySelectedObject = async (req, res) => {
         });
     }
 
-
     try {
         const data = await createRecordModel.getFieldsByObject(sobject.trim());
-
 
         return res.status(200).json({
             success: true,
@@ -51,11 +45,9 @@ export const getFieldsBySelectedObject = async (req, res) => {
     }
 };
 
-
 // GET /api/salesforce/create-record/lookup?sobject=Account&search=Acme&limit=50
 export const getLookupRecords = async (req, res) => {
     const { sobject, search, limit } = req.query;
-
 
     if (!sobject || typeof sobject !== 'string') {
         return res.status(400).json({
@@ -64,10 +56,8 @@ export const getLookupRecords = async (req, res) => {
         });
     }
 
-
     try {
         const records = await createRecordModel.getLookupRecords(sobject.trim(), search, limit);
-
 
         return res.status(200).json({
             success: true,
@@ -83,7 +73,6 @@ export const getLookupRecords = async (req, res) => {
     }
 };
 
-
 // GET /api/salesforce/create-record/variables
 export const getFlowVariables = (req, res) => {
     const data = createRecordModel.getAvailableVariables();
@@ -92,7 +81,6 @@ export const getFlowVariables = (req, res) => {
         ...data
     });
 };
-
 
 // POST /api/salesforce/create-record/reset-context
 export const resetFlowVariables = (req, res) => {
@@ -103,11 +91,9 @@ export const resetFlowVariables = (req, res) => {
     });
 };
 
-
 // POST /api/salesforce/create-record/execute-flow
 export const executeCreateFlow = async (req, res) => {
     const { steps } = req.body;
-
 
     if (!Array.isArray(steps) || steps.length === 0) {
         return res.status(400).json({
@@ -116,11 +102,9 @@ export const executeCreateFlow = async (req, res) => {
         });
     }
 
-
     try {
         const flowResult = await createRecordModel.executeFlow(steps);
         const statusCode = flowResult.success ? 201 : 400;
-
 
         return res.status(statusCode).json(flowResult);
     } catch (error) {
@@ -132,11 +116,9 @@ export const executeCreateFlow = async (req, res) => {
     }
 };
 
-
 // POST /api/salesforce/create-record
 export const createRecord = async (req, res) => {
     const { sobject, data, stepKey } = req.body;
-
 
     if (!sobject || !data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length === 0) {
         return res.status(400).json({
@@ -145,14 +127,12 @@ export const createRecord = async (req, res) => {
         });
     }
 
-
     try {
         const { result, resolvedData, flowContext } = await createRecordModel.createRecordForObject(
             String(sobject).trim(),
             data,
             stepKey
         );
-
 
         if (!result.success) {
             return res.status(400).json({
@@ -161,7 +141,6 @@ export const createRecord = async (req, res) => {
                 errors: result.errors
             });
         }
-
 
         return res.status(201).json({
             success: true,
@@ -184,14 +163,12 @@ export const createRecord = async (req, res) => {
 export const createBulkRecords = async (req, res) => {
     const { sobject, records } = req.body;
 
-
     if (!sobject || typeof sobject !== 'string') {
         return res.status(400).json({
             success: false,
             message: '"sobject" is required in request body.'
         });
     }
-
 
     if (!Array.isArray(records) || records.length === 0) {
         return res.status(400).json({
@@ -200,11 +177,9 @@ export const createBulkRecords = async (req, res) => {
         });
     }
 
-
     try {
         const results = await createRecordModel.createBulkRecords(sobject.trim(), records);
         const createdIds = results.filter((r) => r.success).map((r) => r.id);
-
 
         return res.status(201).json({
             success: true,
@@ -220,4 +195,3 @@ export const createBulkRecords = async (req, res) => {
         });
     }
 };
-

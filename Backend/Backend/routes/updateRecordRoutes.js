@@ -7,9 +7,7 @@ import {
     updateBulkRecords
 } from '../controllers/updateRecordController.js';
 
-
 const router = Router();
-
 
 router.get('/objects', getObjectsForUpdateRecord);
 router.get('/fields', getFieldsForUpdateRecord);
@@ -17,6 +15,4 @@ router.get('/lookup', getLookupForUpdateRecord);
 router.patch('/', updateSingleRecord);
 router.patch('/bulk', updateBulkRecords);
 
-
 export default router;
-

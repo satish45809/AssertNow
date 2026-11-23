@@ -72,7 +72,7 @@ export const WorkflowListPage: React.FC = () => {
   const filteredWorkflows = workflows.filter(wf => {
     const matchesSearch = wf.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           wf.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || wf.status.toLowerCase() === statusFilter.toLowerCase();
+    const matchesStatus = statusFilter === 'all' || (wf.status || 'draft').toLowerCase() === statusFilter.toLowerCase();
     return matchesSearch && matchesStatus;
   });
 
@@ -225,7 +225,7 @@ export const WorkflowListPage: React.FC = () => {
 
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                        v{wf.version} • {wf.status}
+                        v{wf.version} • {wf.status || 'DRAFT'}
                       </span>
                       {/* Action buttons: Edit & Delete */}
                       <button

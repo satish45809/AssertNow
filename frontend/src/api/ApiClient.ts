@@ -2,6 +2,7 @@
  * Centralized API Client
  * Manages HTTP communication with the AssertNow Backend Engine.
  * Enforces strict error throwing with ZERO silent fallbacks.
+ * Configurable via VITE_API_BASE_URL or NEXT_PUBLIC_API_BASE_URL.
  */
 
 export class ApiError extends Error {
@@ -19,14 +20,48 @@ export class ApiError extends Error {
 }
 
 export class ApiClient {
-  public static readonly BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000/api/salesforce';
+  public static getBaseUrl(): string {
+    const raw =
+      (import.meta as any).env?.VITE_API_BASE_URL ||
+      (import.meta as any).env?.NEXT_PUBLIC_API_BASE_URL ||
+      (import.meta as any).env?.VITE_API_URL ||
+      'http://localhost:5000';
+    return String(raw).replace(/\/+$/, '');
+  }
+
+  public static getUrl(endpoint: string): string {
+    const base = this.getBaseUrl();
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+    // If endpoint already starts with http/https, use it directly
+    if (/^https?:\/\//i.test(endpoint)) {
+      return endpoint;
+    }
+
+    // If base already contains /api/salesforce
+    if (base.endsWith('/api/salesforce')) {
+      if (cleanEndpoint.startsWith('/api/salesforce/')) {
+        return `${base}${cleanEndpoint.slice('/api/salesforce'.length)}`;
+      }
+      return `${base}${cleanEndpoint}`;
+    }
+
+    // Base is e.g. http://localhost:5000
+    if (cleanEndpoint.startsWith('/api/salesforce/')) {
+      return `${base}${cleanEndpoint}`;
+    }
+    if (cleanEndpoint.startsWith('/api/')) {
+      return `${base}${cleanEndpoint}`;
+    }
+    return `${base}/api/salesforce${cleanEndpoint}`;
+  }
 
   public static async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${this.BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const url = this.getUrl(endpoint);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string> || {}),
+      ...((options.headers as Record<string, string>) || {}),
     };
 
     try {
@@ -38,8 +73,15 @@ export class ApiClient {
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        const errorCode = data?.error?.code || (typeof data?.error === 'string' ? data.error : null) || `HTTP_${response.status}`;
-        const errorMessage = data?.error?.message || data?.message || (typeof data?.error === 'string' ? data.error : null) || `Request failed with status ${response.status} (${response.statusText})`;
+        const errorCode =
+          data?.error?.code ||
+          (typeof data?.error === 'string' ? data.error : null) ||
+          `HTTP_${response.status}`;
+        const errorMessage =
+          data?.error?.message ||
+          data?.message ||
+          (typeof data?.error === 'string' ? data.error : null) ||
+          `Request failed with status ${response.status} (${response.statusText})`;
         const errorDetails = data?.error?.details || data?.details || data;
 
         throw new ApiError(errorMessage, response.status, errorCode, errorDetails);

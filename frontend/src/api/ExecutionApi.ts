@@ -1,50 +1,95 @@
 /**
  * Test Execution & Assertion API Service
- * Stores and manages execution logs in browser localStorage (no database or file dependencies).
+ * Backed by the PostgreSQL workflow_test_logs table via TestLogApi.
+ * Single Source of Truth for all test executions and step assertions.
  */
 
 import { TestExecution } from '../types';
+import { TestLogApi, BackendTestLog } from './TestLogApi';
 import { WorkflowApi } from './WorkflowApi';
 
-const STORAGE_KEY = 'assertnow_executions';
+function mapLogToExecution(log: BackendTestLog, workflowNameMap: Record<number, string> = {}): TestExecution {
+  const steps = Array.isArray(log.step_logs) ? log.step_logs : [];
+  const passedSteps = steps.filter((s: any) => s.status === 'PASSED').length;
+  const failedSteps = steps.filter((s: any) => s.status === 'FAILED').length;
+
+  const mappedSteps = steps.map((s: any, idx: number) => ({
+    id: `step-${idx + 1}`,
+    stepId: `step-${idx + 1}`,
+    stepOrder: typeof s.step === 'number' ? s.step : idx + 1,
+    nodeId: s.key || s.nodeId || `node-${idx + 1}`,
+    nodeLabel: s.nodeLabel || s.sobject || `Step ${idx + 1}`,
+    nodeType: s.action || s.nodeType || 'ACTION',
+    status: s.status as any,
+    startedAt: log.started_at,
+    completedAt: log.completed_at || log.started_at,
+    durationMs: s.durationMs || 100,
+    inputData: s.input || s.inputData || {},
+    outputData: s.output || s.outputData || {},
+    errorMessage: s.error || s.errorMessage,
+  }));
+
+  const wfName = log.workflow_id
+    ? (workflowNameMap[log.workflow_id] || `Workflow #${log.workflow_id}`)
+    : 'Salesforce Workflow';
+
+  return {
+    id: String(log.id),
+    workflowId: log.workflow_id ? String(log.workflow_id) : 'wf-manual',
+    workflowName: wfName,
+    workflowVersion: 1,
+    organizationId: 'org-enterprise-1',
+    triggerSource: (log.trigger_type as any) || 'MANUAL',
+    status: log.status,
+    startedAt: log.started_at,
+    completedAt: log.completed_at || undefined,
+    durationMs: log.duration_ms || 0,
+    totalSteps: steps.length,
+    passedSteps,
+    failedSteps,
+    errorSummary: log.error_message || undefined,
+    environments: [
+      {
+        platform: 'salesforce',
+        environmentName: 'Salesforce Org',
+        environmentId: `conn-${log.connection_id || 1}`,
+      },
+    ],
+    steps: mappedSteps,
+    logs: mappedSteps.map(s => ({
+      timestamp: new Date(log.started_at).toLocaleTimeString(),
+      level: s.status === 'FAILED' ? ('ERROR' as const) : ('INFO' as const),
+      message: `[Step ${s.stepOrder}] ${s.nodeLabel} (${s.nodeType}): ${s.status}${s.errorMessage ? ` - ${s.errorMessage}` : ''}`,
+      nodeId: s.nodeId,
+    })),
+  };
+}
 
 export class ExecutionApi {
-  private static getStoredExecutions(): TestExecution[] {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // ignore
-    }
-    return [];
-  }
-
-  private static setStoredExecutions(executions: TestExecution[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(executions));
-    } catch (err) {
-      console.error('Failed to save executions to localStorage:', err);
-    }
-  }
-
   public static async getExecutions(workflowId?: string): Promise<TestExecution[]> {
-    const list = this.getStoredExecutions();
-    if (workflowId) {
-      return list.filter(e => e.workflowId === workflowId);
-    }
-    return list;
+    const numericWfId = workflowId && !isNaN(Number(workflowId)) ? Number(workflowId) : undefined;
+    const logs = await TestLogApi.list({ workflowId: numericWfId, limit: 100 });
+
+    // Try to get workflow names for nice display
+    const wfMap: Record<number, string> = {};
+    try {
+      const wfs = await WorkflowApi.getWorkflows();
+      wfs.forEach(w => {
+        const numId = Number(w.id);
+        if (!isNaN(numId)) wfMap[numId] = w.name;
+      });
+    } catch {}
+
+    return logs.map(log => mapLogToExecution(log, wfMap));
   }
 
   public static async getExecutionById(id: string): Promise<TestExecution> {
-    const list = this.getStoredExecutions();
-    const exec = list.find(e => e.id === id);
-    if (!exec) {
-      throw new Error(`Test run with ID "${id}" was not found in localStorage.`);
+    const list = await this.getExecutions();
+    const found = list.find(e => e.id === id);
+    if (!found) {
+      throw new Error(`Test run with ID "${id}" was not found.`);
     }
-    return exec;
+    return found;
   }
 
   public static async recordCustomExecution(params: {
@@ -68,129 +113,70 @@ export class ExecutionApi {
     }>;
     logs: Array<{ timestamp: string; level: 'INFO' | 'WARN' | 'ERROR'; message: string; nodeId?: string }>;
   }): Promise<TestExecution> {
-    const execId = `exec-${Date.now()}`;
-    const startTime = new Date(Date.now() - params.durationMs);
+    const numericWfId = !isNaN(Number(params.workflowId)) ? Number(params.workflowId) : null;
 
-    const steps = params.steps.map((s, idx) => ({
-      id: `step-${idx + 1}`,
-      stepId: `step-${idx + 1}`,
-      stepOrder: idx + 1,
-      nodeId: s.nodeId,
-      nodeLabel: s.nodeLabel,
-      nodeType: s.nodeType,
-      status: (s.status === 'SKIPPED' ? 'PASSED' : s.status) as 'PASSED' | 'FAILED',
-      startedAt: new Date(startTime.getTime() + idx * 200).toISOString(),
-      completedAt: new Date(startTime.getTime() + (idx + 1) * 200).toISOString(),
-      durationMs: s.durationMs || 200,
-      inputData: s.inputData || {},
-      outputData: s.outputData || {},
-      errorMessage: s.errorMessage
+    const stepLogs = params.steps.map((s, idx) => ({
+      step: idx + 1,
+      key: s.nodeId,
+      sobject: s.nodeLabel,
+      action: s.nodeType,
+      status: s.status,
+      durationMs: s.durationMs,
+      error: s.errorMessage || null,
+      input: s.inputData || {},
+      output: s.outputData || {},
     }));
 
-    const execution: TestExecution = {
-      id: execId,
-      workflowId: params.workflowId,
-      workflowName: params.workflowName || 'Salesforce Regression Suite',
-      workflowVersion: params.workflowVersion || 1,
-      organizationId: 'org-enterprise-1',
-      triggerSource: 'MANUAL',
-      status: params.status,
-      startedAt: startTime.toISOString(),
-      completedAt: new Date().toISOString(),
-      durationMs: params.durationMs,
-      totalSteps: steps.length,
-      passedSteps: steps.filter(s => s.status === 'PASSED').length,
-      failedSteps: steps.filter(s => s.status === 'FAILED').length,
-      errorSummary: params.errorSummary,
-      environments: [{
-        platform: 'salesforce',
-        environmentName: params.environmentName || 'TMNow (Salesforce Org)',
-        environmentId: params.environmentId || 'env-sf-1794773232566'
-      }],
-      steps,
-      logs: params.logs
-    };
+    // Create RUNNING log in DB
+    const created = await TestLogApi.create({
+      workflowId: numericWfId,
+      triggerType: 'MANUAL',
+      stepLogs,
+    });
 
-    const list = this.getStoredExecutions();
-    list.unshift(execution);
-    this.setStoredExecutions(list);
-    return execution;
+    // Complete log in DB
+    const completed = await TestLogApi.complete(created.id, {
+      status: params.status,
+      durationMs: params.durationMs,
+      errorMessage: params.errorSummary || null,
+      stepLogs,
+    });
+
+    return mapLogToExecution(completed);
   }
 
   public static async triggerExecution(payload: { workflowId: string; environmentId?: string }): Promise<TestExecution> {
+    const numericWfId = !isNaN(Number(payload.workflowId)) ? Number(payload.workflowId) : null;
     let wf: any;
     try {
       wf = await WorkflowApi.getWorkflowById(payload.workflowId);
-    } catch {
-      wf = {
-        id: payload.workflowId,
-        name: 'Salesforce Regression Suite',
-        version: 1,
-        graph: { nodes: [] }
-      };
-    }
+    } catch {}
 
-    const execId = `exec-${Date.now()}`;
-    const startTime = new Date();
     const nodes = wf?.graph?.nodes || [];
-
-    const steps: any[] = nodes.map((node: any, idx: number) => ({
-      id: `step-${idx + 1}`,
-      stepId: `step-${idx + 1}`,
-      stepOrder: idx + 1,
-      nodeId: node.id,
-      nodeLabel: node.data?.label || `Step ${idx + 1}`,
-      nodeType: node.data?.nodeType || 'ACTION',
-      status: 'PASSED' as const,
-      startedAt: new Date(startTime.getTime() + idx * 800).toISOString(),
-      completedAt: new Date(startTime.getTime() + (idx + 1) * 800).toISOString(),
-      durationMs: 800,
-      inputData: node.data?.config || {},
-      outputData: { executed: true, config: node.data?.config },
+    const stepLogs = nodes.map((n: any, idx: number) => ({
+      step: idx + 1,
+      key: n.id,
+      sobject: n.data?.label || 'Action',
+      action: n.data?.nodeType || 'ACTION',
+      status: 'PASSED',
+      durationMs: 300,
+      input: n.data?.config || {},
+      output: { simulated: true },
     }));
 
-    const execution: TestExecution = {
-      id: execId,
-      workflowId: payload.workflowId,
-      workflowName: wf?.name || 'Salesforce Regression Suite',
-      workflowVersion: wf?.version || 1,
-      organizationId: 'org-enterprise-1',
-      triggerSource: 'MANUAL',
+    const created = await TestLogApi.create({
+      workflowId: numericWfId,
+      triggerType: 'MANUAL',
+      stepLogs,
+    });
+
+    const completed = await TestLogApi.complete(created.id, {
       status: 'PASSED',
-      startedAt: startTime.toISOString(),
-      completedAt: new Date(startTime.getTime() + steps.length * 800).toISOString(),
-      durationMs: Math.max(steps.length * 800, 1000),
-      totalSteps: steps.length,
-      passedSteps: steps.length,
-      failedSteps: 0,
-      environments: [{
-        platform: 'salesforce',
-        environmentName: 'TMNow (Salesforce Org)',
-        environmentId: payload.environmentId || 'env-sf-1794773232566'
-      }],
-      steps,
-      logs: steps.map((s: any, idx: number) => ({
-        timestamp: new Date(startTime.getTime() + idx * 800).toLocaleTimeString(),
-        level: 'INFO' as const,
-        message: `[Step ${idx + 1}/${steps.length}] Executed "${s.nodeLabel}" (${s.nodeType}) - Duration: 800ms`,
-        nodeId: s.nodeId
-      }))
-    };
+      durationMs: Math.max(stepLogs.length * 300, 500),
+      errorMessage: null,
+      stepLogs,
+    });
 
-    const list = this.getStoredExecutions();
-    list.unshift(execution);
-    this.setStoredExecutions(list);
-
-    // Also update workflow lastExecutedAt in localStorage
-    if (wf) {
-      try {
-        await WorkflowApi.updateWorkflow(wf.id, {
-          lastExecutedAt: 'Just now',
-          lastExecutionStatus: 'PASSED'
-        });
-      } catch {}
-    }
-
-    return execution;
+    return mapLogToExecution(completed, numericWfId ? { [numericWfId]: wf?.name } : {});
   }
 }

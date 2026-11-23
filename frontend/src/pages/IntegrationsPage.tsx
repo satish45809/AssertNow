@@ -11,23 +11,16 @@ import {
   Lock,
   Database,
   ShieldCheck,
-  Check,
   Activity,
-  Layers,
-  ChevronRight,
-  Server,
-  Copy,
-  FileText,
   Globe,
-  PlusCircle,
-  Trash2,
-  Search
+  Server,
+  Zap,
+  Unplug,
+  Loader2,
+  Copy
 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
-import { SalesforceApi } from '@/api/SalesforceApi';
-import { ErrorState } from '@/components/ErrorState';
-import { LoadingState } from '@/components/LoadingState';
-import { IntegrationEnvironment, AuthMethod } from '@/types';
+import { useConnection } from '@/providers/ConnectionProvider';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -35,1130 +28,465 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 
 export const IntegrationsPage: React.FC = () => {
-  const [environments, setEnvironments] = useState<IntegrationEnvironment[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const [selectedEnv, setSelectedEnv] = useState<IntegrationEnvironment | null>(null);
+  const {
+    status,
+    isConnected,
+    isLoading,
+    refreshStatus,
+    connect,
+    disconnect,
+    testQuery,
+  } = useConnection();
+
+  // Connect modal
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
-  const [testingEnvId, setTestingEnvId] = useState<string | null>(null);
-  const [testSuccessMessage, setTestSuccessMessage] = useState<string | null>(null);
+  const [connectName, setConnectName] = useState('');
+  const [connectDomain, setConnectDomain] = useState('');
+  const [connectClientId, setConnectClientId] = useState('');
+  const [connectClientSecret, setConnectClientSecret] = useState('');
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
-  const loadEnvironments = React.useCallback(() => {
-    setIsLoading(true);
-    setError(null);
-    SalesforceApi.getEnvironments()
-      .then(data => {
-        setEnvironments(data);
-      })
-      .catch(err => {
-        setError(err);
-      })
-      .finally(() => setIsLoading(false));
-  }, []);
+  // Test query
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; records?: any[]; error?: string } | null>(null);
 
-  React.useEffect(() => {
-    loadEnvironments();
-  }, [loadEnvironments]);
+  // Disconnect
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
 
-  // New Environment Form state
-  const newPlatform = 'salesforce';
-  const [newEnvType, setNewEnvType] = useState('sandbox');
-  const [newAuthMethod, setNewAuthMethod] = useState<AuthMethod>('OAuth 2.0');
-  const [newEnvName, setNewEnvName] = useState('');
-  const [newLoginUrl, setNewLoginUrl] = useState('');
-  const [newClientId, setNewClientId] = useState('');
-  const [newClientSecret, setNewClientSecret] = useState('');
-  const [newRefreshToken, setNewRefreshToken] = useState('');
-  const [newAccessToken, setNewAccessToken] = useState('');
-  const [newJwtUsername, setNewJwtUsername] = useState('');
-  const [newJwtPrivateKey, setNewJwtPrivateKey] = useState('');
-  const [newAccountId, setNewAccountId] = useState('');
-  const [copiedCallback, setCopiedCallback] = useState(false);
-  const [isOAuthAuthorizing, setIsOAuthAuthorizing] = useState(false);
-  const [oauthAuthorized, setOauthAuthorized] = useState(false);
-  const [authorizedUser, setAuthorizedUser] = useState<string | null>(null);
-  const [authorizedOrg, setAuthorizedOrg] = useState<string | null>(null);
-  const [showAdvancedToken, setShowAdvancedToken] = useState(false);
-  const [toastCard, setToastCard] = useState<{
-    type: 'success' | 'error' | 'info';
-    title: string;
-    description: string;
-    details?: { label: string; value: string }[];
-  } | null>(null);
+  // Toast/banner
+  const [toast, setToast] = useState<{ type: 'success' | 'error' | 'info'; title: string; description: string } | null>(null);
 
-  const showPopCard = (type: 'success' | 'error' | 'info', title: string, description: string, details?: { label: string; value: string }[]) => {
-    setToastCard({ type, title, description, details });
+  const showToast = (type: 'success' | 'error' | 'info', title: string, description: string) => {
+    setToast({ type, title, description });
+    setTimeout(() => setToast(null), 5000);
   };
 
-  const handleTestConnection = async (envId: string) => {
-    setTestingEnvId(envId);
-    setTestSuccessMessage(null);
-    try {
-      const rawRes: any = await SalesforceApi.testEnvironmentById(envId);
-      const result = rawRes?.data || rawRes || {};
-      const orgName = result.organizationName || result.Name || 'Salesforce Org';
-      const orgId = result.organizationId || result.Id || 'Active';
-      const apiVer = result.apiVersion || '62.0';
-      const user = result.username || 'Authorized User';
+  // ── Handlers ───────────────────────────────────────────────────────────
 
-      setTestSuccessMessage(`Handshake Verified! Org: "${orgName}" (${orgId}) · API v${apiVer} ONLINE`);
-      setTimeout(() => setTestSuccessMessage(null), 5000);
-      showPopCard('success', 'Handshake Verified', `Salesforce Org is connected and responsive.`, [
-        { label: 'Organization', value: orgName },
-        { label: 'Org ID', value: orgId },
-        { label: 'User', value: user },
-        { label: 'API Version', value: `v${apiVer}` },
-        { label: 'Status', value: 'ONLINE & READY' }
-      ]);
-      setEnvironments(prev => prev.map(e => e.id === envId ? { ...e, status: 'ACTIVE', connectionStatus: 'HEALTHY' } : e));
-    } catch (err: any) {
-      const isExpired = String(err.message || '').includes('expired') || String(err.message || '').includes('invalid_grant');
-      showPopCard(
-        'error',
-        isExpired ? 'Salesforce Session Expired' : 'Handshake Verification Failed',
-        isExpired
-          ? 'Your Salesforce OAuth session or refresh token has expired or was revoked. Please click "Reconnect" to sign in again.'
-          : (err.message || 'Verification failed')
-      );
-      setEnvironments(prev => prev.map(e => e.id === envId ? { ...e, status: 'ERROR', connectionStatus: 'DEGRADED' } : e));
-    } finally {
-      setTestingEnvId(null);
-    }
-  };
-
-  const handleDeleteEnvironment = async (envId: string, envName: string) => {
-    if (!window.confirm(`Are you sure you want to disconnect and remove "${envName}"?`)) {
-      return;
-    }
-    try {
-      await SalesforceApi.deleteEnvironment(envId);
-      setEnvironments(prev => prev.filter(e => e.id !== envId));
-      showPopCard('success', 'Environment Disconnected', `"${envName}" was successfully removed from your connected fleet.`);
-    } catch (err: any) {
-      showPopCard('error', 'Failed to Remove Environment', err.message || 'Could not delete environment.');
-    }
-  };
-
-  const handleReconnectEnvironment = (env: any) => {
-    setNewEnvName(env.name || '');
-    setNewLoginUrl(env.instanceUrl || env.credentials?.loginUrl || '');
-    setNewClientId(env.credentials?.clientId || '');
-    setNewClientSecret(env.credentials?.clientSecret ? '••••••••' : '');
-    setNewRefreshToken('');
-    setOauthAuthorized(false);
-    setAuthorizedUser(null);
-    setAuthorizedOrg(null);
-    setIsConnectModalOpen(true);
-  };
-
-  const handleCopyCallback = () => {
-    const callback = `${window.location.origin}/oauth/callback`;
-    navigator.clipboard?.writeText(callback);
-    setCopiedCallback(true);
-    setTimeout(() => setCopiedCallback(false), 2000);
-  };
-
-  // RFC 7636 PKCE Generator for Salesforce OAuth
-  const generatePKCE = async () => {
-    const array = new Uint8Array(32);
-    window.crypto.getRandomValues(array);
-    const codeVerifier = Array.from(array, byte => ('0' + byte.toString(16)).slice(-2)).join('');
-
-    const encoder = new TextEncoder();
-    const data = encoder.encode(codeVerifier);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const base64 = btoa(String.fromCharCode.apply(null, hashArray));
-    const codeChallenge = base64
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-
-    return { codeVerifier, codeChallenge };
-  };
-
-  const handleSimulateOAuth = async () => {
-    if (!newClientId) {
-      showPopCard('error', 'Missing Client ID', 'Please enter your Client ID (Consumer Key) from Salesforce External Client App.');
-      return;
-    }
-
-    if (!newLoginUrl) {
-      showPopCard('error', 'Missing Instance URL', 'Please enter your Salesforce Domain URL (e.g. https://yourcompany.my.salesforce.com).');
-      return;
-    }
-
-    const callbackUrl = `${window.location.origin}/oauth/callback`;
-    let cleanLoginUrl = newLoginUrl.trim().replace(/\/+$/, '');
-    if (!cleanLoginUrl.startsWith('http://') && !cleanLoginUrl.startsWith('https://')) {
-      cleanLoginUrl = `https://${cleanLoginUrl}`;
-    }
-
-    // Case A: User already has a Refresh Token (e.g. from Postman) -> Direct Verification
-    if (newRefreshToken) {
-      setIsOAuthAuthorizing(true);
-      try {
-        const result = await SalesforceApi.verifyConnection({
-          loginUrl: cleanLoginUrl,
-          instanceUrl: cleanLoginUrl,
-          clientId: newClientId,
-          clientSecret: newClientSecret || undefined,
-          refreshToken: newRefreshToken,
-        });
-        setOauthAuthorized(true);
-        showPopCard('success', 'Handshake Verified', `Connected to Salesforce Org: ${result.organizationName || 'Developer Edition'}`, [
-          { label: 'Organization', value: result.organizationName || 'Developer Edition' },
-          { label: 'Org ID', value: result.organizationId },
-          { label: 'API Version', value: `v${result.apiVersion}` },
-          { label: 'Status', value: 'ONLINE & READY' }
-        ]);
-      } catch (err: any) {
-        showPopCard('error', 'OAuth Handshake Failed', err.message);
-      } finally {
-        setIsOAuthAuthorizing(false);
-      }
-      return;
-    }
-
-    // Case B: 1-Click Browser OAuth Flow for End Users with PKCE (RFC 7636)
-    setIsOAuthAuthorizing(true);
-    try {
-      const { codeVerifier, codeChallenge } = await generatePKCE();
-      const authorizeEndpoint = `${cleanLoginUrl}/services/oauth2/authorize?response_type=code&client_id=${encodeURIComponent(newClientId)}&redirect_uri=${encodeURIComponent(callbackUrl)}&code_challenge=${encodeURIComponent(codeChallenge)}&code_challenge_method=S256&prompt=consent`;
-
-      const width = 640;
-      const height = 740;
-      const left = window.screenX + (window.outerWidth - width) / 2;
-      const top = window.screenY + (window.outerHeight - height) / 2;
-
-      const popup = window.open(
-        authorizeEndpoint,
-        'salesforce_oauth_popup',
-        `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no`
-      );
-
-      if (!popup) {
-        setIsOAuthAuthorizing(false);
-        showPopCard('info', 'Popup Blocked', 'Popup was blocked by your browser. Please allow popups for localhost to authorize with Salesforce.');
-        return;
-      }
-
-      const messageHandler = async (event: MessageEvent) => {
-        if (event.origin !== window.location.origin) return;
-        if (event.data?.type === 'SALESFORCE_AUTH_CODE') {
-          window.removeEventListener('message', messageHandler);
-
-          if (event.data.error) {
-            setIsOAuthAuthorizing(false);
-            showPopCard('error', 'Salesforce Authorization Error', String(event.data.error));
-            return;
-          }
-
-          const code = event.data.code;
-          try {
-            const exchangeResult = await SalesforceApi.exchangeCode({
-              code,
-              clientId: newClientId,
-              clientSecret: newClientSecret || undefined,
-              codeVerifier,
-              instanceUrl: cleanLoginUrl,
-              redirectUri: callbackUrl,
-            });
-
-            if (exchangeResult.accessToken) {
-              setNewAccessToken(exchangeResult.accessToken);
-            }
-            if (exchangeResult.refreshToken) {
-              setNewRefreshToken(exchangeResult.refreshToken);
-            }
-            if (exchangeResult.instanceUrl) {
-              setNewLoginUrl(exchangeResult.instanceUrl);
-            }
-            setOauthAuthorized(true);
-            setAuthorizedUser(exchangeResult.username || exchangeResult.userId || 'Salesforce User');
-            setAuthorizedOrg(exchangeResult.organizationName || 'Salesforce Org');
-            showPopCard('success', 'OAuth Authorization Successful', 'Connected and authenticated with Salesforce PKCE.', [
-              { label: 'User', value: exchangeResult.username || exchangeResult.userId || 'Salesforce User' },
-              { label: 'Organization', value: exchangeResult.organizationName || 'Salesforce Org' },
-              { label: 'Instance', value: exchangeResult.instanceUrl || cleanLoginUrl },
-              { label: 'Session', value: 'PKCE S256 Active' }
-            ]);
-          } catch (err: any) {
-            showPopCard('error', 'Failed to Exchange Code', err.message);
-          } finally {
-            setIsOAuthAuthorizing(false);
-          }
-        }
-      };
-
-      window.addEventListener('message', messageHandler);
-
-      const pollTimer = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(pollTimer);
-          setIsOAuthAuthorizing(false);
-          window.removeEventListener('message', messageHandler);
-        }
-      }, 1000);
-    } catch (err: any) {
-      setIsOAuthAuthorizing(false);
-      showPopCard('error', 'Could Not Initiate PKCE', err.message);
-    }
-  };
-
-  const handleAddEnvironment = async (e: React.FormEvent) => {
+  const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEnvName) return;
+    if (!connectDomain || !connectClientId || !connectClientSecret) return;
 
-    let cleanUrl = newLoginUrl.trim().replace(/\/+$/, '');
-    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-      cleanUrl = `https://${cleanUrl}`;
-    }
-
+    setIsConnecting(true);
+    setConnectError(null);
     try {
-      // Dynamic Authentication based on selected method
-      let connectDetails: any = null;
-
-      if (newAuthMethod === 'Client Credentials' || (!oauthAuthorized && newClientId && newClientSecret)) {
-        if (!newClientId || !newClientSecret) {
-          throw new Error('Please enter both Client ID (Consumer Key) and Client Secret.');
-        }
-
-        const connectRes: any = await SalesforceApi.connect({
-          myDomain: cleanUrl,
-          clientId: newClientId,
-          clientSecret: newClientSecret
-        });
-
-        connectDetails = connectRes?.data || connectRes;
-      } else if (!oauthAuthorized) {
-        // Fallback verification for other auth modes
-        await SalesforceApi.verifyConnection({
-          loginUrl: cleanUrl,
-          instanceUrl: cleanUrl,
-          clientId: newClientId,
-          clientSecret: newClientSecret || undefined,
-          refreshToken: newRefreshToken || undefined,
-          accessToken: newAccessToken || undefined,
-        });
-      }
-
-      // Create or update environment in local state and persistence
-      const created: any = {
-        id: `env-${Date.now()}`,
-        name: newEnvName,
-        platform: newPlatform || 'Salesforce CRM',
-        environmentType: newEnvType as any,
-        authMethod: newAuthMethod,
-        instanceUrl: connectDetails?.instanceUrl || cleanUrl,
-        status: 'ACTIVE',
-        connectionStatus: 'HEALTHY',
-        lastSync: new Date().toISOString(),
-        apiVersion: '60.0',
-        credentials: {
-          loginUrl: cleanUrl,
-          instanceUrl: connectDetails?.instanceUrl || cleanUrl,
-          clientId: newClientId,
-          clientSecret: newClientSecret || undefined,
-          refreshToken: newRefreshToken || undefined,
-          accessToken: newAccessToken || undefined,
-          username: newJwtUsername || authorizedUser || 'Client Credentials User',
-        } as any,
-      };
-
-      setEnvironments(prev => {
-        const idx = prev.findIndex(e => e.id === created.id || e.name === created.name);
-        if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = created;
-          try {
-            localStorage.setItem('assertnow_environments', JSON.stringify(next));
-          } catch {}
-          return next;
-        }
-        const updated = [created, ...prev];
-        try {
-          localStorage.setItem('assertnow_environments', JSON.stringify(updated));
-        } catch {}
-        return updated;
+      await connect({
+        name: connectName || connectDomain,
+        myDomain: connectDomain.trim(),
+        clientId: connectClientId.trim(),
+        clientSecret: connectClientSecret.trim(),
       });
-
+      showToast('success', 'Connected!', `Successfully connected to ${connectName || connectDomain}`);
       setIsConnectModalOpen(false);
-      setTestSuccessMessage(`Successfully connected and verified "${newEnvName}"!`);
-      setTimeout(() => setTestSuccessMessage(null), 5000);
-      setNewEnvName('');
-      setNewLoginUrl('');
-      setNewClientId('');
-      setNewClientSecret('');
-      setNewRefreshToken('');
-      setNewAccessToken('');
-      setNewJwtUsername('');
-      setNewJwtPrivateKey('');
-      setNewAccountId('');
-      setOauthAuthorized(false);
-      setAuthorizedUser(null);
-      setAuthorizedOrg(null);
-
-      showPopCard(
-        'success',
-        'Salesforce Connected',
-        `Environment "${newEnvName}" successfully authenticated with Salesforce via Client Credentials.`,
-        [
-          { label: 'Environment', value: newEnvName },
-          { label: 'Instance', value: connectDetails?.instanceUrl || cleanUrl },
-          { label: 'Method', value: newAuthMethod },
-          { label: 'Status', value: 'ONLINE & READY' }
-        ]
-      );
+      resetConnectForm();
     } catch (err: any) {
-      showPopCard('error', 'Connection Verification Failed', err.message);
+      const msg = err?.message || 'Failed to connect to Salesforce.';
+      setConnectError(msg);
+      showToast('error', 'Connection Failed', msg);
+    } finally {
+      setIsConnecting(false);
     }
   };
 
-  const renderAuthBadge = (method: string) => {
-    if (method === 'OAuth 2.0') {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-          <KeyRound className="w-2.5 h-2.5" />
-          OAuth 2.0
-        </span>
-      );
+  const handleDisconnect = async () => {
+    setIsDisconnecting(true);
+    try {
+      await disconnect();
+      setTestResult(null);
+      showToast('info', 'Disconnected', 'Salesforce connection has been terminated.');
+    } catch (err: any) {
+      showToast('error', 'Disconnect Failed', err?.message || 'Could not disconnect.');
+    } finally {
+      setIsDisconnecting(false);
     }
-    if (method === 'JWT') {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
-          <ShieldCheck className="w-2.5 h-2.5" />
-          JWT
-        </span>
-      );
+  };
+
+  const handleTestQuery = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const res = await testQuery();
+      setTestResult({ success: true, records: res.records });
+      showToast('success', 'Connection Verified', `Query returned ${res.records?.length || 0} record(s).`);
+    } catch (err: any) {
+      setTestResult({ success: false, error: err?.message || 'Query failed.' });
+      showToast('error', 'Test Query Failed', err?.message || 'Could not execute test query.');
+    } finally {
+      setIsTesting(false);
     }
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-        <Lock className="w-2.5 h-2.5" />
-        Client Credentials
-      </span>
-    );
+  };
+
+  const resetConnectForm = () => {
+    setConnectName('');
+    setConnectDomain('');
+    setConnectClientId('');
+    setConnectClientSecret('');
+    setConnectError(null);
+  };
+
+  // Format expiry time
+  const formatExpiry = (expiresAt: string | null): string => {
+    if (!expiresAt) return 'N/A';
+    const exp = new Date(expiresAt);
+    const now = new Date();
+    const diffMs = exp.getTime() - now.getTime();
+    if (diffMs <= 0) return 'Expired';
+    const mins = Math.round(diffMs / 60000);
+    if (mins < 60) return `${mins}m remaining`;
+    const hrs = Math.round(mins / 60);
+    return `${hrs}h remaining`;
   };
 
   return (
     <div className="flex flex-col min-h-full">
       <Header
-        title="Connected Salesforce Organizations"
-        subtitle="Manage secure Salesforce CRM environments, developer orgs, and OAuth credentials"
-        badge={environments.length > 0 ? `${environments.length} Active Orgs` : undefined}
+        title="Salesforce Integrations"
+        subtitle="Connect, monitor, and manage your Salesforce org connection"
         actions={
-          <button
+          <Button
+            size="sm"
             onClick={() => setIsConnectModalOpen(true)}
-            className="h-8 px-3 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium flex items-center gap-1.5 transition-all shadow-sm shadow-blue-500/30"
+            className="font-mono text-xs h-8 gap-1.5"
           >
             <Plus className="w-3.5 h-3.5" />
-            Connect Environment
-          </button>
+            {isConnected ? 'Reconnect' : 'Connect Org'}
+          </Button>
         }
       />
 
+      {/* Toast Banner */}
+      {toast && (
+        <div className={`mx-6 mt-4 p-3 rounded-xl border flex items-start gap-3 animate-in fade-in slide-in-from-top-2 ${
+          toast.type === 'success' ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800' :
+          toast.type === 'error' ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800' :
+          'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800'
+        }`}>
+          {toast.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 flex-shrink-0" /> :
+           toast.type === 'error' ? <XCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 mt-0.5 flex-shrink-0" /> :
+           <Activity className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />}
+          <div className="min-w-0">
+            <p className={`text-xs font-bold ${
+              toast.type === 'success' ? 'text-emerald-800 dark:text-emerald-300' :
+              toast.type === 'error' ? 'text-rose-800 dark:text-rose-300' :
+              'text-blue-800 dark:text-blue-300'
+            }`}>{toast.title}</p>
+            <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">{toast.description}</p>
+          </div>
+          <button onClick={() => setToast(null)} className="ml-auto text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs cursor-pointer flex-shrink-0">✕</button>
+        </div>
+      )}
+
       <div className="p-6 space-y-6">
-        {isLoading && (
-          <LoadingState
-            message="Connecting to Salesforce and ERP Environments..."
-            submessage="Loading registered environments and authentication credentials"
-          />
-        )}
-
-        {error && (
-          <ErrorState
-            error={error}
-            onRetry={loadEnvironments}
-          />
-        )}
-
-        {!isLoading && !error && (
+        {/* Loading State */}
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center min-h-[300px]">
+            <RefreshCw className="w-6 h-6 animate-spin text-blue-500 mb-2" />
+            <span className="text-xs text-slate-500 font-mono">Checking backend connection status...</span>
+          </div>
+        ) : (
           <>
-            {/* Banner Alert if testing */}
-            {testSuccessMessage && (
-              <div className="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-2.5 text-xs text-emerald-700 dark:text-emerald-300 animate-in fade-in duration-300">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-                <span>{testSuccessMessage}</span>
+            {/* ── Connection Status Card ─────────────────────────────────── */}
+            <Card className="p-0 overflow-hidden border-2 transition-colors
+              ${isConnected ? 'border-emerald-200 dark:border-emerald-800/60' : 'border-slate-200 dark:border-slate-800'}
+            ">
+              {/* Status Header */}
+              <div className={`px-6 py-5 flex items-center justify-between ${
+                isConnected
+                  ? 'bg-gradient-to-r from-emerald-50 to-green-50/50 dark:from-emerald-950/40 dark:to-green-950/20'
+                  : 'bg-gradient-to-r from-slate-50 to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50'
+              }`}>
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                    isConnected
+                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                  }`}>
+                    {isConnected ? <ShieldCheck className="w-6 h-6" /> : <Unplug className="w-6 h-6" />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                        {isConnected ? status.name || 'Salesforce Org' : 'No Active Connection'}
+                      </h2>
+                      <Badge variant={isConnected ? 'default' : 'secondary'} className={`text-[10px] font-mono ${
+                        isConnected ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30' : ''
+                      }`}>
+                        {isConnected ? 'CONNECTED' : 'DISCONNECTED'}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono">
+                      {isConnected ? (status.instanceUrl || status.myDomain || 'Salesforce Cloud') : 'Connect a Salesforce org to begin.'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2">
+                  {isConnected && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleTestQuery}
+                        disabled={isTesting}
+                        className="font-mono text-xs h-8 gap-1.5"
+                      >
+                        {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                        {isTesting ? 'Testing...' : 'Test Connection'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDisconnect}
+                        disabled={isDisconnecting}
+                        className="font-mono text-xs h-8 gap-1.5 text-rose-600 hover:text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                      >
+                        {isDisconnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unplug className="w-3.5 h-3.5" />}
+                        {isDisconnecting ? 'Disconnecting...' : 'Disconnect'}
+                      </Button>
+                    </>
+                  )}
+                  {!isConnected && (
+                    <Button
+                      size="sm"
+                      onClick={() => setIsConnectModalOpen(true)}
+                      className="font-mono text-xs h-8 gap-1.5"
+                    >
+                      <Key className="w-3.5 h-3.5" />
+                      Connect Salesforce Org
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => refreshStatus()}
+                    className="font-mono text-xs h-8 gap-1.5"
+                    title="Refresh connection status from backend"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
               </div>
+
+              {/* Connection Details Grid */}
+              {isConnected && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-slate-100 dark:bg-slate-800/40 border-t border-slate-200 dark:border-slate-800">
+                  {[
+                    { label: 'Connection ID', value: `#${status.connectionId}`, icon: Database },
+                    { label: 'My Domain', value: status.myDomain || 'N/A', icon: Globe },
+                    { label: 'Instance URL', value: status.instanceUrl || 'N/A', icon: Server },
+                    { label: 'Token Expires', value: formatExpiry(status.tokenExpiresAt), icon: Lock },
+                  ].map((item, idx) => (
+                    <div key={idx} className="bg-white dark:bg-slate-900/80 px-5 py-4">
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400 uppercase font-mono font-semibold mb-1.5">
+                        <item.icon className="w-3 h-3" />
+                        {item.label}
+                      </div>
+                      <p className="text-xs font-mono font-medium text-slate-800 dark:text-slate-200 truncate" title={item.value}>
+                        {item.value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {/* ── Disconnection Warning ──────────────────────────────────── */}
+            {!isConnected && (
+              <Card className="p-5 border-dashed border-2 border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/20">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="text-sm font-bold text-amber-800 dark:text-amber-200">No Salesforce Org Connected</h3>
+                    <p className="text-xs text-amber-700 dark:text-amber-300 mt-1 leading-relaxed">
+                      Salesforce metadata discovery, record CRUD operations, and workflow execution are <strong>disabled</strong> until
+                      you connect an org. Click <strong>"Connect Salesforce Org"</strong> above to authenticate via OAuth 2.0 Client Credentials.
+                    </p>
+                  </div>
+                </div>
+              </Card>
             )}
 
-            {/* Salesforce Organizations Grid */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-sky-500/10 border border-sky-500/20 text-sky-600 dark:text-sky-400 font-bold flex items-center justify-center text-xs">
-                    SF
-                  </div>
-                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">Salesforce Connected Organizations</h2>
+            {/* ── Test Query Result Card ─────────────────────────────────── */}
+            {testResult && (
+              <Card className={`p-5 border ${
+                testResult.success ? 'border-emerald-200 dark:border-emerald-800/60' : 'border-rose-200 dark:border-rose-800/60'
+              }`}>
+                <div className="flex items-center gap-2 mb-3">
+                  {testResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                  )}
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {testResult.success ? 'Test Query Successful' : 'Test Query Failed'}
+                  </h3>
+                  <span className="text-[10px] font-mono text-slate-500">SELECT Id, Name, Type FROM Account LIMIT 3</span>
                 </div>
-                <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                  {environments.length} {environments.length === 1 ? 'environment' : 'environments'} connected
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {environments.map((env) => (
-                  <div
-                    key={env.id}
-                    className="p-5 rounded-2xl bg-white dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 shadow-sm transition-all space-y-4.5"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <h3 className="text-base font-bold text-slate-900 dark:text-white">{env.name}</h3>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 capitalize border border-blue-500/20 font-medium">
-                            {env.environmentType || (env as any).tier || 'developer'}
-                          </span>
-                        </div>
-                        <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                          <Globe className="w-3 h-3 text-slate-400 flex-shrink-0" />
-                          <span className="truncate max-w-[280px]">{env.instanceUrl || (env as any).credentials?.instanceUrl || 'Salesforce Cloud'}</span>
-                        </div>
-                      </div>
-
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border shadow-xs ${env.status === 'ERROR'
-                          ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
-                          : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                        }`}>
-                        <span className={`w-2 h-2 rounded-full ${env.status === 'ERROR' ? 'bg-rose-500' : 'bg-emerald-500 animate-pulse'
-                          }`}></span>
-                        {env.status === 'ERROR' ? 'EXPIRED' : (env.status || env.connectionStatus || 'ONLINE')}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 py-2.5 border-y border-slate-100 dark:border-slate-800/60 text-[11px]">
-                      <div>
-                        <div className="text-slate-500 text-[10px] mb-0.5">Auth Method</div>
-                        <div>{renderAuthBadge(env.authMethod)}</div>
-                      </div>
-                      <div>
-                        <div className="text-slate-500 text-[10px]">API Latency / Health</div>
-                        <div className={`font-mono font-medium ${env.status === 'ERROR' ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                          {env.status === 'ERROR' ? '0% (Offline)' : `${env.apiHealth ?? 100}% (38ms)`}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-slate-500 text-[10px]">Metadata Synced</div>
-                        <div className="text-slate-700 dark:text-slate-300 font-mono font-medium">
-                          {env.lastMetadataSyncAt || 'Just Now'}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-1">
-                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
-                        <Lock className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                        AES-256-GCM Vaulted
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleReconnectEnvironment(env)}
-                          className="h-7 px-2.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-[11px] font-medium flex items-center gap-1 transition-colors border border-blue-500/20 cursor-pointer"
-                          title="Re-authorize or update OAuth credentials"
-                        >
-                          <KeyRound className="w-3 h-3" />
-                          Reconnect
-                        </button>
-
-                        <button
-                          disabled={testingEnvId === env.id}
-                          onClick={() => handleTestConnection(env.id)}
-                          className="h-7 px-2.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-medium flex items-center gap-1 transition-colors border border-slate-200 dark:border-transparent cursor-pointer"
-                        >
-                          <RefreshCw className={`w-3 h-3 ${testingEnvId === env.id ? 'animate-spin text-blue-500' : ''}`} />
-                          {testingEnvId === env.id ? 'Verifying...' : 'Test Connection'}
-                        </button>
-
-                        <button
-                          onClick={() => setSelectedEnv(env)}
-                          className="h-7 px-2.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-[11px] font-medium transition-colors cursor-pointer"
-                        >
-                          Diagnostics
-                        </button>
-
-                        <button
-                          onClick={() => handleDeleteEnvironment(env.id, env.name)}
-                          className="h-7 w-7 rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center transition-colors border border-rose-500/20 cursor-pointer"
-                          title="Disconnect and remove environment"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
+                {testResult.success && testResult.records && testResult.records.length > 0 ? (
+                  <div className="rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-xs font-mono">
+                      <thead className="bg-slate-50 dark:bg-slate-900">
+                        <tr>
+                          {Object.keys(testResult.records[0]).filter(k => k !== 'attributes').map(key => (
+                            <th key={key} className="text-left px-3 py-2 text-[10px] font-bold text-slate-500 uppercase">{key}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {testResult.records.map((rec: any, idx: number) => (
+                          <tr key={idx} className="border-t border-slate-100 dark:border-slate-800">
+                            {Object.entries(rec).filter(([k]) => k !== 'attributes').map(([k, v]) => (
+                              <td key={k} className="px-3 py-2 text-slate-700 dark:text-slate-300">{String(v ?? '')}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                ))}
-              </div>
+                ) : testResult.error ? (
+                  <p className="text-xs text-rose-600 dark:text-rose-400 font-mono p-3 bg-rose-50 dark:bg-rose-950/30 rounded-lg">{testResult.error}</p>
+                ) : (
+                  <p className="text-xs text-slate-500 font-mono">No records returned.</p>
+                )}
+              </Card>
+            )}
+
+            {/* ── Integration Info ────────────────────────────────────────── */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {[
+                {
+                  icon: Lock,
+                  title: 'OAuth 2.0 Client Credentials',
+                  desc: 'Secure server-to-server authentication. No user interaction required after initial setup.',
+                  color: 'blue',
+                },
+                {
+                  icon: Database,
+                  title: 'PostgreSQL Persistence',
+                  desc: 'Connection credentials & tokens stored securely in the Assert_Now database, surviving server restarts.',
+                  color: 'emerald',
+                },
+                {
+                  icon: Activity,
+                  title: 'Auto Token Refresh',
+                  desc: 'Expired tokens are automatically refreshed via the backend before every Salesforce API call.',
+                  color: 'purple',
+                },
+              ].map((info, idx) => (
+                <Card key={idx} className="p-4 space-y-2">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-${info.color}-500/10`}>
+                    <info.icon className={`w-4 h-4 text-${info.color}-600 dark:text-${info.color}-400`} />
+                  </div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white">{info.title}</h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">{info.desc}</p>
+                </Card>
+              ))}
             </div>
           </>
         )}
       </div>
 
-      {/* Connect Environment Wizard Modal */}
-      {isConnectModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-3xl max-h-[94vh] flex flex-col rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex-shrink-0 bg-white dark:bg-slate-900">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">Connect Salesforce Environment</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Add Salesforce Developer, Sandbox, or Scratch Org to AssertNow</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsConnectModalOpen(false)}
-                className="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
-              >
-                ✕
-              </button>
-            </div>
+      {/* ── Connect Modal ────────────────────────────────────────────────── */}
+      <Dialog open={isConnectModalOpen} onOpenChange={(open) => { setIsConnectModalOpen(open); if (!open) resetConnectForm(); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Key className="w-4 h-4 text-blue-500" />
+              Connect Salesforce Org
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Enter your Salesforce Connected App credentials (OAuth 2.0 Client Credentials flow).
+            </DialogDescription>
+          </DialogHeader>
 
-            {/* Form Body */}
-            <form onSubmit={handleAddEnvironment} className="flex flex-col flex-1 min-h-0">
-              <div className="p-6 overflow-y-auto space-y-4 flex-1">
-                {/* Environment Name & Tier */}
-                <div className="grid grid-cols-2 gap-3.5">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Salesforce Environment Display Name</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. SFDC Production or Dev Org"
-                      value={newEnvName}
-                      onChange={(e) => setNewEnvName(e.target.value)}
-                      className="w-full h-9 px-3 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Environment Tier</label>
-                    <select
-                      value={newEnvType}
-                      onChange={(e) => setNewEnvType(e.target.value)}
-                      className="w-full h-9 px-3 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="sandbox">Sandbox / UAT</option>
-                      <option value="production">Production</option>
-                      <option value="developer">Developer Edition</option>
-                      <option value="scratch">Scratch Org</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* 3 Ways to Authenticate: OAuth 2.0 | JWT | Client Credentials */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Authentication Method
-                  </label>
-                  <div className="grid grid-cols-3 gap-3">
-                    {(['OAuth 2.0', 'JWT', 'Client Credentials'] as AuthMethod[]).map((method) => {
-                      const isSelected = newAuthMethod === method;
-                      return (
-                        <button
-                          key={method}
-                          type="button"
-                          onClick={() => {
-                            setNewAuthMethod(method);
-                            setOauthAuthorized(false);
-                          }}
-                          className={`h-[68px] p-3 rounded-xl border flex flex-col items-center justify-center text-center transition-all ${isSelected
-                              ? method === 'OAuth 2.0'
-                                ? 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400 ring-2 ring-blue-500/20'
-                                : method === 'JWT'
-                                  ? 'border-purple-500 bg-purple-500/10 text-purple-600 dark:text-purple-400 ring-2 ring-purple-500/20'
-                                  : 'border-emerald-500 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 ring-2 ring-emerald-500/20'
-                              : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-700'
-                            }`}
-                        >
-                          <div className="flex items-center gap-1.5 font-bold text-xs leading-none">
-                            {method === 'OAuth 2.0' && <KeyRound className="w-3.5 h-3.5 flex-shrink-0" />}
-                            {method === 'JWT' && <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0" />}
-                            {method === 'Client Credentials' && <Lock className="w-3.5 h-3.5 flex-shrink-0" />}
-                            <span>{method}</span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 mt-1.5 leading-none">
-                            {method === 'OAuth 2.0' && 'User / PKCE Code Flow'}
-                            {method === 'JWT' && 'Service Account Keypair'}
-                            {method === 'Client Credentials' && 'Machine-to-Machine App'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Dynamic Auth Fields for OAuth 2.0 */}
-                {newAuthMethod === 'OAuth 2.0' && (
-                  <div className="space-y-3 p-4 rounded-xl bg-blue-500/5 border border-blue-500/20">
-                    <div className="flex items-center justify-between text-xs font-semibold text-blue-700 dark:text-blue-400">
-                      <span className="flex items-center gap-1.5">
-                        <KeyRound className="w-3.5 h-3.5" />
-                        OAuth 2.0 Authorization Code & PKCE
-                      </span>
-                      <span className="text-[10px] font-mono uppercase bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
-                        RFC 7636
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3.5">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Login Domain / Instance URL
-                        </label>
-                        <input
-                          type="text"
-                          value={newLoginUrl}
-                          onChange={(e) => setNewLoginUrl(e.target.value)}
-                          placeholder="e.g. https://yourcompany.my.salesforce.com"
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Client ID (Consumer Key)
-                        </label>
-                        <input
-                          type="text"
-                          value={newClientId}
-                          onChange={(e) => setNewClientId(e.target.value)}
-                          placeholder="3MVG9...sample_client_id"
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3.5">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Client Secret (Consumer Secret)
-                        </label>
-                        <input
-                          type="password"
-                          autoComplete="new-password"
-                          value={newClientSecret}
-                          onChange={(e) => setNewClientSecret(e.target.value)}
-                          placeholder="••••••••••••••••"
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Salesforce Authorization
-                        </label>
-                        <button
-                          type="button"
-                          disabled={isOAuthAuthorizing || oauthAuthorized}
-                          onClick={handleSimulateOAuth}
-                          className={`w-full h-9 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${oauthAuthorized
-                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                              : 'bg-blue-600 hover:bg-blue-500 text-white shadow-sm'
-                            }`}
-                        >
-                          {isOAuthAuthorizing ? (
-                            <>
-                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                              <span>Authorizing OAuth Handshake...</span>
-                            </>
-                          ) : oauthAuthorized ? (
-                            <>
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>OAuth Verified & Ready ✓</span>
-                            </>
-                          ) : (
-                            <>
-                              <ExternalLink className="w-3.5 h-3.5" />
-                              <span>Authorize with Salesforce (Popup)</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-
-                    {oauthAuthorized && (
-                      <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-300 animate-in fade-in duration-200">
-                        <div className="flex items-center gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-                          <span>Authorized as <strong>{authorizedUser || 'Salesforce User'}</strong> ({authorizedOrg || 'Salesforce Org'})</span>
-                        </div>
-                        <span className="text-[10px] font-mono uppercase bg-emerald-500/20 px-2 py-0.5 rounded text-emerald-600 dark:text-emerald-400 font-semibold">
-                          Active Session
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Salesforce Callback URL Guidance */}
-                    <div className="p-3 rounded-xl bg-white/60 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                          Callback / Redirect URL
-                        </label>
-                        <span className="text-[10px] text-slate-500">Add to Salesforce External Client App</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-8 px-2.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300 font-mono flex items-center select-all truncate">
-                          {window.location.origin}/oauth/callback
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleCopyCallback}
-                          className="h-8 px-3 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:border-blue-500 text-xs font-medium text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1.5 transition-colors flex-shrink-0"
-                        >
-                          {copiedCallback ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                          <span>{copiedCallback ? 'Copied' : 'Copy'}</span>
-                        </button>
-                      </div>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
-                        In Salesforce, add this URL under <strong>Callback URL</strong> on a new line. In cloud deployments, this dynamically uses your cloud domain.
-                      </p>
-                    </div>
-
-                    {/* Optional Developer Advanced Toggle for Manual Refresh Token */}
-                    <div className="pt-0.5">
-                      <button
-                        type="button"
-                        onClick={() => setShowAdvancedToken(!showAdvancedToken)}
-                        className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 flex items-center gap-1 transition-colors"
-                      >
-                        <span>{showAdvancedToken ? '▾ Hide' : '▸ Advanced:'} Paste existing Refresh Token (for developers with Postman)</span>
-                      </button>
-                      {showAdvancedToken && (
-                        <div className="mt-2 animate-in fade-in duration-150">
-                          <input
-                            type="password"
-                            value={newRefreshToken}
-                            onChange={(e) => setNewRefreshToken(e.target.value)}
-                            placeholder="Paste existing refresh token here..."
-                            className="w-full h-8 px-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-blue-500"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Dynamic Auth Fields for JWT */}
-                {newAuthMethod === 'JWT' && (
-                  <div className="space-y-3 p-4 rounded-xl bg-purple-500/5 border border-purple-500/20">
-                    <div className="flex items-center justify-between text-xs font-semibold text-purple-700 dark:text-purple-400">
-                      <span className="flex items-center gap-1.5">
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        JWT Bearer Flow (Service Account)
-                      </span>
-                      <span className="text-[10px] font-mono uppercase bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
-                        RS256 Certificate
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3.5">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Token Endpoint / Audience
-                        </label>
-                        <input
-                          type="text"
-                          value={newLoginUrl}
-                          onChange={(e) => setNewLoginUrl(e.target.value)}
-                          placeholder="https://login.salesforce.com"
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Client ID (Connected App)
-                        </label>
-                        <input
-                          type="text"
-                          value={newClientId}
-                          onChange={(e) => setNewClientId(e.target.value)}
-                          placeholder="3MVG9...consumer_key"
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3.5">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Subject Username (Service Account)
-                        </label>
-                        <input
-                          type="email"
-                          value={newJwtUsername}
-                          onChange={(e) => setNewJwtUsername(e.target.value)}
-                          placeholder="automation-svc@enterprise.com"
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Signature Specification
-                        </label>
-                        <div className="h-9 px-3 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 font-mono flex items-center">
-                          RS256 PKCS#8 Keypair (SHA-256)
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                        RSA Private Key (.pem format)
-                      </label>
-                      <textarea
-                        rows={2}
-                        value={newJwtPrivateKey}
-                        onChange={(e) => setNewJwtPrivateKey(e.target.value)}
-                        placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;MIIEowIBAAKCAQEA0t...&#10;-----END RSA PRIVATE KEY-----"
-                        className="w-full p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-[11px] font-mono text-slate-900 dark:text-white focus:outline-none focus:border-purple-500 resize-none"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Dynamic Auth Fields for Client Credentials */}
-                {newAuthMethod === 'Client Credentials' && (
-                  <div className="space-y-3 p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
-                    <div className="flex items-center justify-between text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                      <span className="flex items-center gap-1.5">
-                        <Lock className="w-3.5 h-3.5" />
-                        OAuth 2.0 Client Credentials Grant
-                      </span>
-                      <span className="text-[10px] font-mono uppercase bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                        RFC 6749 M2M
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3.5">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Salesforce My Domain URL
-                        </label>
-                        <input
-                          type="text"
-                          value={newLoginUrl}
-                          onChange={(e) => setNewLoginUrl(e.target.value)}
-                          placeholder="https://yourcompany.my.salesforce.com"
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Client ID (Consumer Key)
-                        </label>
-                        <input
-                          type="text"
-                          value={newClientId}
-                          onChange={(e) => setNewClientId(e.target.value)}
-                          placeholder="3MVG9..."
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3.5">
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          Client Secret (Consumer Secret)
-                        </label>
-                        <input
-                          type="password"
-                          autoComplete="new-password"
-                          value={newClientSecret}
-                          onChange={(e) => setNewClientSecret(e.target.value)}
-                          placeholder="••••••••••••••••"
-                          className="w-full h-9 px-3 rounded-lg bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-white font-mono focus:outline-none focus:border-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-medium text-slate-700 dark:text-slate-300 mb-1">
-                          OAuth Scopes
-                        </label>
-                        <div className="h-9 px-3 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300 font-mono flex items-center">
-                          api, refresh_token, id
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>Client secret is hardware-encrypted via AES-256-GCM envelope vault</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Security confirmation */}
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center gap-2.5 text-[11px] text-slate-600 dark:text-slate-400">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
-                  <span>
-                    All tokens and secrets are encrypted with AES-256-GCM. Integration keys are strictly decoupled from browser sessions and authenticated via local engine workers.
-                  </span>
-                </div>
-              </div>
-
-              {/* Modal Footer */}
-              <div className="px-6 py-3.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2.5 bg-slate-50/80 dark:bg-slate-900/80 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsConnectModalOpen(false)}
-                  className="h-9 px-4 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-medium transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="h-9 px-5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm shadow-blue-500/30 whitespace-nowrap min-w-max flex-shrink-0"
-                >
-                  Save & Connect Environment
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Diagnostics Drawer */}
-      {selectedEnv && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 h-full p-6 space-y-6 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-200 shadow-2xl">
+          <form onSubmit={handleConnect} className="space-y-4 mt-2">
             <div>
-              <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">{selectedEnv.name}</h3>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono capitalize">
-                    {selectedEnv.platform} • {selectedEnv.environmentType}
-                  </div>
-                </div>
-                <button
-                  onClick={() => setSelectedEnv(null)}
-                  className="text-slate-400 hover:text-slate-700 dark:hover:text-white text-sm"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <div className="mt-6 space-y-4 text-xs">
-                <div>
-                  <div className="text-slate-500 font-mono text-[10px] mb-1">AUTHENTICATION & SECURITY PROFILE</div>
-                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 font-mono text-[11px] text-slate-700 dark:text-slate-300 space-y-1.5 border border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center justify-between pb-1.5 mb-1 border-b border-slate-200 dark:border-slate-800">
-                      <span className="text-slate-500">Method:</span>
-                      <div>{renderAuthBadge(selectedEnv.authMethod)}</div>
-                    </div>
-                    {selectedEnv.authMethod === 'OAuth 2.0' && (
-                      <>
-                        <div className="text-emerald-600 dark:text-emerald-400">✓ PKCE Code Verifier Handshake: Verified</div>
-                        <div className="text-emerald-600 dark:text-emerald-400">✓ Refresh Token Rotated (7,200s TTL)</div>
-                        <div className="text-slate-500">ℹ Auto-renew threshold: &lt; 300s</div>
-                      </>
-                    )}
-                    {selectedEnv.authMethod === 'JWT' && (
-                      <>
-                        <div className="text-emerald-600 dark:text-emerald-400">✓ RS256 PKCS#8 Keypair Validated</div>
-                        <div className="text-emerald-600 dark:text-emerald-400">✓ Service Account Token Issued: 84ms</div>
-                        <div className="text-slate-500">ℹ Certificate Expiry: 320 days remaining</div>
-                      </>
-                    )}
-                    {selectedEnv.authMethod === 'Client Credentials' && (
-                      <>
-                        <div className="text-emerald-600 dark:text-emerald-400">✓ Machine-to-Machine Grant 200 OK</div>
-                        <div className="text-emerald-600 dark:text-emerald-400">✓ Client Secret Vault Hash: AES-256-GCM Verified</div>
-                        <div className="text-slate-500">ℹ Token Lifespan: 3,600s</div>
-                      </>
-                    )}
-                    <div className="text-emerald-600 dark:text-emerald-400">✓ HTTPS TLSv1.3 Handshake OK</div>
-                    <div className="text-emerald-600 dark:text-emerald-400">✓ REST API Version: active</div>
-                    <div className="text-slate-500">ℹ API daily consumption: 1,482 / 100,000</div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-slate-500 font-mono text-[10px] mb-1">METADATA DISCOVERY STATUS</div>
-                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500 dark:text-slate-400">Cached Objects:</span>
-                      <span className="text-slate-900 dark:text-white font-mono font-bold">{selectedEnv.objectCount} objects</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500 dark:text-slate-400">Last Synced:</span>
-                      <span className="text-slate-700 dark:text-slate-300 font-mono">{selectedEnv.lastMetadataSyncAt}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider block mb-1.5">
+                Connection Name
+              </label>
+              <Input
+                type="text"
+                placeholder="e.g., Dev Sandbox Org"
+                value={connectName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConnectName(e.target.value)}
+                className="h-9 text-sm"
+              />
             </div>
 
-            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end">
-              <button
-                onClick={() => setSelectedEnv(null)}
-                className="h-8 px-4 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-white text-xs font-semibold transition-colors"
-              >
-                Close Diagnostics
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Sleek Pop Card Modal (Replaces ugly browser alert) */}
-      {toastCard && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${toastCard.type === 'success'
-                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
-                    : toastCard.type === 'error'
-                      ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
-                      : 'bg-blue-500/10 text-blue-500 border border-blue-500/20'
-                  }`}>
-                  {toastCard.type === 'success' && <CheckCircle2 className="w-5 h-5" />}
-                  {toastCard.type === 'error' && <AlertTriangle className="w-5 h-5" />}
-                  {toastCard.type === 'info' && <ExternalLink className="w-5 h-5" />}
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white">{toastCard.title}</h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{toastCard.description}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setToastCard(null)}
-                className="w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
-              >
-                ✕
-              </button>
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider block mb-1.5">
+                My Domain URL <span className="text-rose-500">*</span>
+              </label>
+              <Input
+                type="url"
+                placeholder="https://your-domain.my.salesforce.com"
+                value={connectDomain}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConnectDomain(e.target.value)}
+                required
+                className="h-9 text-sm font-mono"
+              />
             </div>
 
-            {toastCard.details && toastCard.details.length > 0 && (
-              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2 text-xs font-mono">
-                {toastCard.details.map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between gap-3 text-slate-600 dark:text-slate-400">
-                    <span className="text-slate-400">{item.label}:</span>
-                    <span className="font-semibold text-slate-900 dark:text-white truncate max-w-[240px] text-right">{item.value}</span>
-                  </div>
-                ))}
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider block mb-1.5">
+                Client ID <span className="text-rose-500">*</span>
+              </label>
+              <Input
+                type="text"
+                placeholder="Connected App Consumer Key"
+                value={connectClientId}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConnectClientId(e.target.value)}
+                required
+                className="h-9 text-sm font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider block mb-1.5">
+                Client Secret <span className="text-rose-500">*</span>
+              </label>
+              <Input
+                type="password"
+                placeholder="Connected App Consumer Secret"
+                value={connectClientSecret}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConnectClientSecret(e.target.value)}
+                required
+                className="h-9 text-sm font-mono"
+              />
+            </div>
+
+            {connectError && (
+              <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 flex items-start gap-2">
+                <XCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-rose-700 dark:text-rose-300">{connectError}</p>
               </div>
             )}
 
-            <div className="pt-2">
-              <button
+            <div className="flex items-center gap-2 justify-end pt-2">
+              <Button
                 type="button"
-                onClick={() => setToastCard(null)}
-                className={`w-full h-10 rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.99] ${
-                  toastCard.type === 'success'
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20'
-                    : toastCard.type === 'error'
-                      ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20'
-                      : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900'
-                }`}
+                variant="ghost"
+                size="sm"
+                onClick={() => { setIsConnectModalOpen(false); resetConnectForm(); }}
+                className="text-xs"
               >
-                {toastCard.type === 'success' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
-                <span>Done</span>
-              </button>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isConnecting || !connectDomain || !connectClientId || !connectClientSecret}
+                className="text-xs gap-1.5"
+              >
+                {isConnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                {isConnecting ? 'Connecting...' : 'Connect'}
+              </Button>
             </div>
-          </div>
-        </div>
-      )}
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

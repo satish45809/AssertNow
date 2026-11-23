@@ -1,41 +1,19 @@
 import jsforce from 'jsforce';
-import axios from 'axios';
 import salesforceModel from '../models/models.js';
 
-
-async function requestToken(myDomain, clientId, clientSecret) {
-    const tokenUrl = `${myDomain}/services/oauth2/token`;
-    const params = new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: clientId,
-        client_secret: clientSecret
-    });
-
-
-    const response = await axios.post(tokenUrl, params.toString(), {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    });
-    return response.data;
-}
-
-
 let refreshPromise = null;
-
 
 class CreateRecordModel {
     constructor() {
         this.flowContext = {};
     }
 
-
     resetFlowContext() {
         this.flowContext = {};
     }
 
-
     getAvailableVariables() {
         const variables = [];
-
 
         for (const [key, recordInfo] of Object.entries(this.flowContext)) {
             variables.push({
@@ -46,17 +24,14 @@ class CreateRecordModel {
             });
         }
 
-
         return {
             flowContext: this.flowContext,
             variables
         };
     }
 
-
     resolveTemplateValue(value, context = this.flowContext) {
         if (typeof value !== 'string') return value;
-
 
         return value.replace(/\{\{\s*([a-zA-Z0-9_-]+)\.(id|Id)\s*\}\}/g, (match, rawKey) => {
             const normalizedKey = rawKey.toLowerCase();
@@ -67,22 +42,18 @@ class CreateRecordModel {
                     ([k, v]) => k.toLowerCase() === normalizedKey || v.sobject.toLowerCase() === normalizedKey
                 )?.[1];
 
-
             if (!matchedEntry?.id) {
                 throw new Error(`Unresolved variable "${match}". Create ${rawKey} first.`);
             }
-
 
             return matchedEntry.id;
         });
     }
 
-
     resolvePayloadData(data = {}, context = this.flowContext) {
         if (Array.isArray(data)) {
             return data.map((item) => this.resolvePayloadData(item, context));
         }
-
 
         if (data && typeof data === 'object') {
             const resolved = {};
@@ -92,65 +63,49 @@ class CreateRecordModel {
             return resolved;
         }
 
-
         return this.resolveTemplateValue(data, context);
     }
 
-
-    async getActiveToken() {
-        if (salesforceModel.hasValidToken() && salesforceModel.accessToken) {
-            return salesforceModel.accessToken;
+    async getActiveToken(forceRefresh = false) {
+        if (!forceRefresh) {
+            const connRow = await salesforceModel.getValidConnection();
+            return connRow.access_token;
         }
 
-
         if (!refreshPromise) {
-            refreshPromise = requestToken(
-                salesforceModel.myDomain,
-                salesforceModel.clientId,
-                salesforceModel.clientSecret
-            )
-                .then((tokenData) => {
-                    salesforceModel.setSession({
-                        accessToken: tokenData.access_token,
-                        instanceUrl: tokenData.instance_url
-                    });
-                    return tokenData.access_token;
-                })
+            refreshPromise = salesforceModel
+                .refreshToken()
+                .then((updatedRow) => updatedRow.access_token)
                 .finally(() => {
                     refreshPromise = null;
                 });
         }
 
-
         return refreshPromise;
     }
 
+    async getConnection(forceRefresh = false) {
+        const connRow = forceRefresh
+            ? await salesforceModel.refreshToken()
+            : await salesforceModel.getValidConnection();
 
-    async getConnection() {
-        if (!salesforceModel.isConnected) {
-            throw new Error('No active Salesforce connection. Please connect first.');
+        const instanceUrl = connRow.instance_url || connRow.my_domain;
+        const accessToken = connRow.access_token;
+
+        if (!instanceUrl || !accessToken) {
+            throw new Error('Salesforce session is missing instance_url or access_token in database.');
         }
 
-
-        await this.getActiveToken();
-
-
-        if (!salesforceModel.conn || salesforceModel.conn.accessToken !== salesforceModel.accessToken) {
-            salesforceModel.conn = new jsforce.Connection({
-                instanceUrl: salesforceModel.instanceUrl,
-                accessToken: salesforceModel.accessToken,
-                version: '60.0'
-            });
-        }
-
-
-        return salesforceModel.conn;
+        return new jsforce.Connection({
+            instanceUrl,
+            accessToken,
+            version: '60.0'
+        });
     }
-
 
     async executeWithRetry(operationFn) {
         try {
-            const conn = await this.getConnection();
+            const conn = await this.getConnection(false);
             return await operationFn(conn);
         } catch (error) {
             const isSessionError =
@@ -158,41 +113,19 @@ class CreateRecordModel {
                 error?.response?.status === 401 ||
                 String(error?.message || '').includes('INVALID_SESSION_ID');
 
-
-            if (!isSessionError || !salesforceModel.isConnected) {
+            if (!isSessionError) {
                 throw error;
             }
 
-
-            const tokenData = await requestToken(
-                salesforceModel.myDomain,
-                salesforceModel.clientId,
-                salesforceModel.clientSecret
-            );
-            salesforceModel.setSession({
-                accessToken: tokenData.access_token,
-                instanceUrl: tokenData.instance_url
-            });
-
-
-            const freshConn = new jsforce.Connection({
-                instanceUrl: salesforceModel.instanceUrl,
-                accessToken: salesforceModel.accessToken,
-                version: '60.0'
-            });
-            salesforceModel.conn = freshConn;
-
-
+            const freshConn = await this.getConnection(true);
             return await operationFn(freshConn);
         }
     }
-
 
     // Step 1: Createable objects for UI dropdown
     async getCreateableObjects() {
         return await this.executeWithRetry(async (conn) => {
             const globalDescribe = await conn.describeGlobal();
-
 
             return globalDescribe.sobjects
                 .filter((obj) => obj.createable && !obj.deprecatedAndHidden)
@@ -205,12 +138,10 @@ class CreateRecordModel {
         });
     }
 
-
     // Step 2: Createable fields for selected object
     async getFieldsByObject(sobject) {
         return await this.executeWithRetry(async (conn) => {
             const meta = await conn.sobject(sobject).describe();
-
 
             const fields = meta.fields
                 .filter((f) => f.createable)
@@ -227,7 +158,6 @@ class CreateRecordModel {
                     referenceTo: f.referenceTo || []
                 }));
 
-
             return {
                 sobject: meta.name,
                 label: meta.label,
@@ -236,21 +166,17 @@ class CreateRecordModel {
         });
     }
 
-
     // Lookup: Fetch existing parent records (e.g., Accounts for Opportunity, Opportunities for Quote)
     async getLookupRecords(sobject, search = '', limit = 50) {
         if (!/^[a-zA-Z0-9_]+$/.test(sobject)) {
             throw new Error(`Invalid Salesforce object name: "${sobject}".`);
         }
 
-
         return await this.executeWithRetry(async (conn) => {
             const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
             const safeSearch = String(search || '').trim().replace(/['\\]/g, '\\$&');
             const whereClause = safeSearch ? ` WHERE Name LIKE '%${safeSearch}%'` : '';
 
-
-            // Objects like Case/Task don't have Name; fallback to Id-only if Name query fails
             try {
                 const soql = `SELECT Id, Name FROM ${sobject}${whereClause} ORDER BY CreatedDate DESC LIMIT ${safeLimit}`;
                 const result = await conn.query(soql);
@@ -263,19 +189,16 @@ class CreateRecordModel {
         });
     }
 
-
     // Execute connected nodes sequentially (Account -> Contact -> Opportunity -> Quote)
     async executeFlow(steps = []) {
         const context = {};
         const executedSteps = [];
-
 
         for (let i = 0; i < steps.length; i++) {
             const step = steps[i];
             const stepIdentifier = step.key || step.nodeId || step.sobject || `step_${i + 1}`;
             const sobject = String(step.sobject || '').trim();
             const rawData = step.data || {};
-
 
             if (!sobject || typeof rawData !== 'object' || Array.isArray(rawData) || Object.keys(rawData).length === 0) {
                 return {
@@ -289,15 +212,12 @@ class CreateRecordModel {
                 };
             }
 
-
             try {
                 const resolvedData = this.resolvePayloadData(rawData, context);
-
 
                 const result = await this.executeWithRetry(async (conn) => {
                     return await conn.sobject(sobject).create(resolvedData);
                 });
-
 
                 if (!result.success) {
                     return {
@@ -312,12 +232,10 @@ class CreateRecordModel {
                     };
                 }
 
-
                 context[stepIdentifier.toLowerCase()] = { id: result.id, sobject };
                 if (!context[sobject.toLowerCase()]) {
                     context[sobject.toLowerCase()] = { id: result.id, sobject };
                 }
-
 
                 executedSteps.push({
                     step: i + 1,
@@ -340,9 +258,7 @@ class CreateRecordModel {
             }
         }
 
-
         this.flowContext = { ...this.flowContext, ...context };
-
 
         return {
             success: true,
@@ -352,16 +268,13 @@ class CreateRecordModel {
         };
     }
 
-
     // Single record create
     async createRecordForObject(sobject, recordData, stepKey = null) {
         const resolvedData = this.resolvePayloadData(recordData, this.flowContext);
 
-
         const result = await this.executeWithRetry(async (conn) => {
             return await conn.sobject(sobject).create(resolvedData);
         });
-
 
         if (result.success && result.id) {
             const contextKey = (stepKey || sobject).toLowerCase();
@@ -371,14 +284,12 @@ class CreateRecordModel {
             };
         }
 
-
         return {
             result,
             resolvedData,
             flowContext: this.flowContext
         };
     }
-
 
     // Bulk create multiple records (e.g., creating a Quote for each record from Get Records)
     async createBulkRecords(sobject, records = []) {
@@ -387,11 +298,9 @@ class CreateRecordModel {
             throw new Error(`Invalid Salesforce object: "${sobject}".`);
         }
 
-
         if (!Array.isArray(records) || records.length === 0) {
             throw new Error('Non-empty "records" array is required for bulk create.');
         }
-
 
         const cleanRecords = records.map((row) => {
             if (!row || typeof row !== 'object' || Array.isArray(row)) {
@@ -409,7 +318,6 @@ class CreateRecordModel {
             return cleaned;
         });
 
-
         return await this.executeWithRetry(async (conn) => {
             const results = await conn.sobject(cleanSobject).create(cleanRecords);
             return Array.isArray(results) ? results : [results];
@@ -417,6 +325,4 @@ class CreateRecordModel {
     }
 }
 
-
 export default new CreateRecordModel();
-
