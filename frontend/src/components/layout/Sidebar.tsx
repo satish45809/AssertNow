@@ -59,7 +59,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentOrgName }) => {
       label: 'INTEGRATIONS',
       items: [
         { to: '/integrations', label: 'Environments', icon: Layers },
-        { to: '/metadata', label: 'Metadata Registry', icon: Database },
       ]
     },
     {

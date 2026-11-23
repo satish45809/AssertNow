@@ -1140,13 +1140,20 @@ export const IntegrationsPage: React.FC = () => {
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2 pt-1">
+            <div className="pt-2">
               <button
                 type="button"
                 onClick={() => setToastCard(null)}
-                className="h-8.5 px-5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm transition-all shadow-blue-500/20"
+                className={`w-full h-10 rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.99] ${
+                  toastCard.type === 'success'
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20'
+                    : toastCard.type === 'error'
+                      ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-500/20'
+                      : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900'
+                }`}
               >
-                Got it
+                {toastCard.type === 'success' && <Check className="w-3.5 h-3.5 stroke-[2.5]" />}
+                <span>Done</span>
               </button>
             </div>
           </div>
