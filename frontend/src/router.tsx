@@ -33,7 +33,7 @@ export const router = createBrowserRouter([
       },
       {
         path: 'metadata',
-        element: <MetadataRegistryPage />,
+        element: <Navigate to="/integrations" replace />,
       },
       {
         path: 'workflows',

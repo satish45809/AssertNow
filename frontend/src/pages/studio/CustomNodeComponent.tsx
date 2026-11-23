@@ -254,16 +254,20 @@ export const CustomNodeComponent = memo(({ id, data, selected }: any) => {
     case 'GET_RECORDS':
     case 'NS_SEARCH':
     case 'SF_QUERY': {
-      const rec = config?.recordType || config?.object || 'customer';
-      const filter = config?.searchFilter || "custentity_sf_account_id == '{{id}}'";
+      const rec = config?.object || config?.recordType || 'Opportunity';
+      const rawFilters = Array.isArray(config?.filters) ? config.filters : (Array.isArray(config?.conditions) ? config.conditions : []);
+      const filterCount = rawFilters.length;
+      const isFirst = Boolean(config?.onlyFirstRecord || config?.storeCount === 'FIRST');
+      const storageType = isFirst ? 'Single' : 'Collecti...';
+      const detail = `${rec} · ${filterCount} filter${filterCount === 1 ? '' : 's'} · ${storageType}`;
       visualDef = {
         category: 'GET RECORDS',
         accentBorder: 'border-t-emerald-500',
         dotColor: 'bg-emerald-500',
         iconColor: 'text-emerald-600 dark:text-emerald-400',
         iconBg: 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-200 dark:border-emerald-800',
-        subSnippet: `🔍 Filter: ${filter.length > 34 ? filter.slice(0, 34) + '...' : filter}`,
-        detailTag: `${rec} · SuiteTalk Query`,
+        subSnippet: `🔍 Query ${rec} (SOQL)`,
+        detailTag: detail,
         Icon: Search
       };
       break;
@@ -496,9 +500,21 @@ export const CustomNodeComponent = memo(({ id, data, selected }: any) => {
         <div className="mt-2 px-2 py-1 rounded-md border text-[9px] font-mono flex items-center justify-between gap-1 bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300">
           <span className="truncate">{subSnippet}</span>
           <span className="text-[7.5px] font-bold text-slate-400 uppercase flex-shrink-0">
-            SPEC
+            {nodeType === 'GET' || nodeType === 'GET_RECORDS' || nodeType === 'SF_QUERY' ? 'SOQL' : 'SPEC'}
           </span>
         </div>
+
+        {/* Live Queried Record ID & Record Count Badge (e.g. ID: 006g... | 18) */}
+        {(nodeType === 'GET' || nodeType === 'GET_RECORDS' || nodeType === 'SF_QUERY') && (data?.outputData?.record || (data?.outputData?.records && data.outputData.records.length > 0)) && (
+          <div className="mt-1.5 px-2 py-1 rounded-md bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 flex items-center justify-between text-[8.5px] font-mono text-emerald-800 dark:text-emerald-300">
+            <span className="truncate">
+              ID: {data.outputData.record?.Id || data.outputData.records[0]?.Id}
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-emerald-200/80 dark:bg-emerald-900/80 text-emerald-900 dark:text-emerald-200 font-bold ml-1 shrink-0 text-[8px]">
+              {data.outputData.totalSize !== undefined ? data.outputData.totalSize : data.outputData.records.length}
+            </span>
+          </div>
+        )}
 
         {/* Error Alert Banner if failed */}
         {isFailed && data?.errorMessage && (

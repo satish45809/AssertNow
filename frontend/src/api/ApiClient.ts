@@ -88,7 +88,11 @@ export class ApiClient {
     });
   }
 
-  public static delete<T>(endpoint: string, headers?: Record<string, string>): Promise<T> {
-    return this.request<T>(endpoint, { method: 'DELETE', headers });
+  public static delete<T>(endpoint: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'DELETE',
+      body: body ? JSON.stringify(body) : undefined,
+      headers,
+    });
   }
 }
